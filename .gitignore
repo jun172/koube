@@ -1,3 +1,13 @@
+# 秘密情報
 .env
-.env
-.env
+
+# Pythonのキャッシュ
+__pycache__/
+*.pyc
+
+# 仮想環境のフォルダ
+venv/
+.venv/
+
+# IDEの設定（VSCodeなど）
+.vscode/
