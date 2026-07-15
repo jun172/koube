@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🟢❌ 分岐ストーリーシステム</title>
+    <style>
+        body {
+            font-family: 'Helvetica Neue', Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            margin: 0;
+            background-color: #f5f7fa;
+        }
+
+        .text-box {
+            font-size: 1.5rem;
+            font-weight: bold;
+            color: #333;
+            margin-bottom: 30px;
+            text-align: center;
+            min-height: 3em;
+            max-width: 80%;
+            line-height: 1.6;
+        }
+
+        .button-container {
+            display: flex;
+            gap: 20px;
+        }
+
+        .action-button {
+            font-size: 2.5rem;
+            width: 80px;
+            height: 80px;
+            cursor: pointer;
+            border: none;
+            border-radius: 50%;
+            background-color: #ffffff;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s ease;
+        }
+
+        .action-button:hover {
+            transform: scale(1.08);
+        }
+
+        .action-button:active {
+            transform: scale(0.95);
+        }
+    </style>
+</head>
+<body>
+
+    <div id="storyText" class="text-box">【スタート】目の前に分かれ道がある。<br>どっちに進む？</div>
+    
+    <div class="button-container">
+        <button id="ngBtn" class="action-button">❌</button>
+        <button id="okBtn" class="action-button">🟢</button>
+    </div>
+
+    <script>
+        const okBtn = document.getElementById('okBtn');
+        const ngBtn = document.getElementById('ngBtn');
+        const storyText = document.getElementById('storyText');
+
+        // 🟢（マル）を押したときに進む文章リスト
+        const okTextList = [
+            "【🟢ルート・第1話】右の明るい道を進んだ。お花畑が広がっている！",
+            "【🟢ルート・第2話】優しい村人に出会い、美味しいスープを貰った。",
+            "【🟢ルート・最終話】そのまま安全に目的地へ到着！ハッピーエンド！"
+        ];
+
+        // ❌（バツ）を押したときに進む文章リスト
+        const ngTextList = [
+            "【❌ルート・第1話】左の暗い森を進んだ。不気味な声が聞こえる…。",
+            "【❌ルート・第2話】お化けに遭遇した！全力で走って逃げ出した！",
+            "【❌ルート・最終話】命からがら街にたどり着いた。スリリングなエンド！"
+        ];
+
+        // それぞれのルートが今何番目か数える変数
+        let okIndex = 0;
+        let ngIndex = 0;
+
+        // 🟢 次の「🟢用文章」へ進む
+        okBtn.addEventListener('click', () => {
+            if (okIndex < okTextList.length) {
+                storyText.textContent = okTextList[okIndex];
+                okIndex++; // 🟢の物語を1つ進める
+            } else {
+                alert("🟢の物語はここで終わりです！");
+            }
+        });
+
+        // ❌ 次の「❌用文章」へ進む（戻らない）
+        ngBtn.addEventListener('click', () => {
+            if (ngIndex < ngTextList.length) {
+                storyText.textContent = ngTextList[ngIndex];
+                ngIndex++; // ❌の物語を1つ進める
+            } else {
+                alert("❌の物語はここで終わりです！");
+            }
+        });
+    </script>
+
+</body>
+</html>
