@@ -26,7 +26,7 @@ async def get_and_send_to_supabase():
 
   # X API v2 の検索エンドポイント（例: 特定のキーワードやインフラ関連の投稿を検索する場合）
   # queryには検索したいキーワードを指定します（例: "インフラ 道路" など）
-  query = "インフラ"
+  query = "神戸市"
   url = f"https://api.twitter.com/2/tweets/search/recent?query={query}&tweet.fields=created_at,public_metrics,author_id"
 
   headers = {"Authorization": f"Bearer {X_BEARER_TOKEN}"}
@@ -56,7 +56,5 @@ async def get_and_send_to_supabase():
       # supabase.table("x_posts").insert(insert_data).execute()
       print(f"取得・整形データ: {insert_data}")
 
-  except requests.exceptions.RequestException as e:
-    print(f"X API リクエストエラー: {e}")
   except Exception as e:
-    print(f"予期せぬエラー: {e}")
+    print(f"X API リクエストエラー: {e}")

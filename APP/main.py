@@ -1,6 +1,7 @@
 from  fastapi import FastAPI
 from APP.routers import X
 from routers import Ai
+from routers import SNS
 from dotenv import load_dotenv
 from fastapi.middleware.cors import CORSMiddleware
 import os
@@ -12,8 +13,16 @@ app = FastAPI(
 # ルーターの登録
 # prefixをつけることで、URLが整理されます
 # main.py の修正案
-app.include_router(X.router, prefix="/api/sns", tags=["X"])
+app.include_router(X.router, prefix="/api/x", tags=["X"])
 app.include_router(Ai.router, prefix="/api/ai", tags=["AI"])
+app.include_router(SNS.router,prefix="/api/sns",tags=["SNS"])
+
+
+
+
+
+
+
 #.endファイルを読み込む
 load_dotenv()
 # 環境変数から読み込む（ローカルでは開発用URL、本番ではドメイン）

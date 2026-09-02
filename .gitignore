@@ -1,13 +1,8 @@
-# 秘密情報
-.env
+# Supabase
+.branches
+.temp
 
-# Pythonのキャッシュ
-__pycache__/
-*.pyc
-
-# 仮想環境のフォルダ
-venv/
-.venv/
-
-# IDEの設定（VSCodeなど）
-.vscode/
+# dotenvx
+.env.keys
+.env.local
+.env.*.local
