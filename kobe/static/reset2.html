@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <link rel="icon" href="/static/imag.png" type="image/png">
+    <title>新しいパスワードの設定</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background-color: #131314;
+            color: #e3e3e3;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+        }
+        .card {
+            background: #1e1f20;
+            padding: 40px 30px;
+            border-radius: 12px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+            width: 100%;
+            max-width: 360px;
+            box-sizing: border-box;
+        }
+        .card h2 { font-size: 22px; margin-bottom: 8px; color: #fff; }
+        .subtitle { font-size: 14px; color: #aaa; margin-bottom: 24px; }
+        .form-group { margin-bottom: 20px; }
+        .form-group label { display: block; font-size: 13px; margin-bottom: 6px; color: #ccc; }
+        input[type="password"] {
+            width: 100%; padding: 10px 12px; border: 1px solid #444; border-radius: 6px;
+            font-size: 14px; box-sizing: border-box; background-color: #2d2e30; color: #fff; outline: none;
+        }
+        .btn-primary {
+            width: 100%; background-color: #8ab4f8; color: #131314; padding: 12px;
+            border: none; border-radius: 6px; font-size: 14px; font-weight: bold; cursor: pointer;
+        }
+        .btn-primary:hover { background-color: #aecbfa; }
+        .footer-text { text-align: center; font-size: 13px; color: #aaa; margin-top: 24px; }
+        .footer-text a { color: #8ab4f8; text-decoration: none; }
+        #error-message { color: #f28b82; font-size: 14px; margin-bottom: 16px; display: none; }
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body>
+    <div class="card">
+        <h2>新しいパスワードの設定</h2>
+        <p class="subtitle">新しいパスワードを入力してください</p>
+        
+        <div id="error-message"></div>
+
+        <form id="reset-form" onsubmit="handlePasswordReset(event)">
+            <div class="form-group">
+                <label>新しいパスワード</label>
+                <input type="password" id="newPassword" placeholder="••••••" required>
+            </div>
+            <button type="submit" class="btn-primary">パスワードを更新する</button>
+        </form>
+
+        <p class="footer-text">
+            <a href="/login.html">ログイン画面に戻る</a>
+        </p>
+    </div>
+
+<script>
+    const API_BASE_URL = 'http://localhost:8000';
+    const supabaseClient = window.supabase ? window.supabase.createClient() : null;
+
+    // ページ読み込み時にURLハッシュのエラーをチェック
+    window.addEventListener('DOMContentLoaded', () => {
+        const hash = window.location.hash.substring(1);
+        const params = new URLSearchParams(hash);
+        const errorCode = params.get('error_code');
+
+        if (errorCode) {
+            const errorDiv = document.getElementById('error-message');
+            const form = document.getElementById('reset-form');
+            
+            let msg = "リンクが無効です。";
+            if (errorCode === 'otp_expired') {
+                msg = "パスワード再設定リンクの有効期限が切れているか、すでに使用されています。もう一度申請してください。";
+            }
+            
+            errorDiv.innerText = msg;
+            errorDiv.style.display = 'block';
+            form.style.display = 'none'; // エラー時はフォームを隠して再申請を促す
+        }
+    });
+
+    async function handlePasswordReset(event) {
+        event.preventDefault();
+        const newPassword = document.getElementById("newPassword").value;
+
+        try {
+            if (!supabaseClient) {
+                throw new Error("Supabaseクライアントが初期化されていません。");
+            }
+
+            const { data, error } = await supabaseClient.auth.updateUser({
+                password: newPassword
+            });
+
+            if (error) throw error;
+
+            alert("パスワードが正常に更新されました！ログイン画面へ移動します。");
+            window.location.href = "/login.html";
+        } catch (error) {
+            alert("エラー: " + (error.message || "パスワードの更新に失敗しました。"));
+        }
+    }
+</script>
+</body>
+</html>

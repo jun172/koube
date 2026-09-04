@@ -60,7 +60,11 @@ def upsert_issue_catalog(catalog_data: dict):
     """
     client = get_supabase_client()
     try:
-        response = client.table("issue_catalog").upsert(catalog_data).execute()
+        # idが含まれている場合は更新、なければ新規追加としてupsert
+        response = client.table("issue_catalog").upsert(
+            catalog_data,
+            on_conflict="id"
+        ).execute()
         return response
     except Exception as e:
         print(f"Error upserting issue_catalog: {e}")
@@ -122,7 +126,7 @@ def insert_quiz_response(response_data: dict):
     
 def insert_threads_comment(comment_data: dict):
     """
-    Threadsのコメントデータを threads_comments テーブルへ挿入・更新する（comment_idで重複回避）
+    8. Threadsのコメントデータを threads_comments テーブルへ挿入・更新する（comment_idで重複回避）
     """
     client = get_supabase_client()
     try:

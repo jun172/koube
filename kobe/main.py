@@ -1,14 +1,18 @@
 import os
 from fastapi import FastAPI, BackgroundTasks, HTTPException, Query
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional
 from supabase import Client
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse,HTMLResponse
+from datetime import datetime, timezone
+import uuid
 
-# 自作モジュール（プロジェクト内に配置する想定）
+
+# 自作モジュール
 from x import XApiClient
-from ai import AnalysisEngine
+from ai import get_ai_engine
 from database import get_supabase_client
 
 app = FastAPI(
@@ -17,16 +21,24 @@ app = FastAPI(
     version="1.0.0"
 )
 
+# CORS設定（ブラウザからのアクセスエラーを防ぐため特定のオリジンまたは柔軟に設定）
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:8000", "http://127.0.0.1:8000"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 # 各種クライアントの初期化
 x_client = XApiClient()
-ai_engine = AnalysisEngine()
 supabase: Client = get_supabase_client()
 
 
 # --- Pydanticスキーマ定義 ---
 class CollectionRequest(BaseModel):
     keywords: List[str]
-    history_id: Optional[str] = None  # Gemini風の履歴ID（紐づけて保存する場合）
+    history_id: Optional[str] = None
 
 class IssueCatalogCreate(BaseModel):
     history_id: Optional[str]
@@ -39,19 +51,26 @@ class IssueCatalogCreate(BaseModel):
 class UserSchema(BaseModel):
     email: str
     password: str
-
-# リクエストデータの形を定義
+class SignupSchema(BaseModel):
+    email: str
+    password: str
+    name: str
 class PostCreate(BaseModel):
     post_text: str
     platform: str = "WebDashboard"
 
+class PasswordResetSchema(BaseModel):
+    email: str
+    new_password: str
+
+class PasswordResetRequestSchema(BaseModel):
+    email: str
+    
 # --- 静的ファイル・フロントエンド配信設定 ---
 
 os.makedirs("static", exist_ok=True)
-
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
-# 💡 ルート (http://192.168.6.36:8000/) にアクセスしたときに login.html を返すように変更
 @app.get("/", include_in_schema=False)
 def serve_root():
     path = "static/login.html"
@@ -63,14 +82,16 @@ def serve_root():
 # --- 認証系 API ---
 
 @app.post("/api/signup")
-def signup(user: UserSchema):
-    """
-    新規ユーザー登録を行うAPI
-    """
+def signup(user: SignupSchema):
     try:
         response = supabase.auth.sign_up({
             "email": user.email,
-            "password": user.password
+            "password": user.password,
+            "options": {
+                "data": {
+                    "full_name": user.name
+                }
+            }
         })
         return {"message": "登録成功", "data": response}
     except Exception as e:
@@ -87,44 +108,85 @@ def login(user: UserSchema):
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e)) 
 
+# パスワードを忘れた場合の上書きAPI
+@app.put("/api/users/password-reset")
+def reset_password(data: PasswordResetSchema):
+    try:
+        users_response = supabase.auth.admin.list_users()
+        target_user = next((u for u in users_response if u.email == data.email), None)
+        
+        if not target_user:
+            raise HTTPException(status_code=404, detail="該当するユーザーが見つかりません")
+            
+        response = supabase.auth.admin.update_user_by_id(
+            target_user.id,
+            {"password": data.new_password}
+        )
+        return {"message": "パスワードが正常に上書きされました", "data": response}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+# パスワードリセットメールの送信（Supabase自動処理）
+@app.post("/api/forgot-password")
+def forgot_password(data: PasswordResetRequestSchema):
+    try:
+        # Supabaseの機能で指定メールアドレスへパスワード再設定メールを自動送信
+        response = supabase.auth.reset_password_for_email(
+            data.email,
+            options={
+                "redirect_to": "http://localhost:8000/reset2.html" # 再設定後に誘導するページ
+            }
+        )
+        return {"message": "パスワード再設定メールを送信しました", "data": response}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
 # 1. SNSデータ収集 & AI解析トリガーAPI (バックグラウンド実行)
 @app.post("/api/collect")
 async def trigger_collection(request: CollectionRequest, background_tasks: BackgroundTasks):
-    """
-    指定されたキーワードでX（Twitter）からデータを収集し、
-    データベースへ保存した後にAI解析パイプラインをバックグラウンドで実行する。
-    """
     if not request.keywords:
         raise HTTPException(status_code=400, detail="Keywords must not be empty.")
 
     def run_pipeline():
+        ai_engine = get_ai_engine()
         for keyword in request.keywords:
             print(f"Starting collection for keyword: {keyword}")
             posts = x_client.fetch_posts_by_keyword(keyword)
             if not posts:
                 continue
-            x_client.save_posts_to_db(posts)
-
+            
+            # 各ポストをDBに保存し、発行された整数型の id を取得してAI解析に渡す
             for post in posts:
                 try:
-                    ai_engine.generate_analysis(
-                        post_id=post['original_post_id'], 
-                        text=post['post_text'], 
-                        like_count=post['likes_count']
-                    )
+                    saved_res = supabase.table("sns_posts").upsert(
+                        post, 
+                        on_conflict="original_post_id"
+                    ).execute()
+
+                    # data がリストであり、かつ最初の要素が辞書型であることを安全に判定・キャストする
+                    if saved_res and hasattr(saved_res, "data") and isinstance(saved_res.data, list) and len(saved_res.data) > 0:
+                        first_row = saved_res.data[0]
+                        if isinstance(first_row, dict):
+                            # 明示的に int 型にキャストして Pylance の警告を回避
+                            raw_id = first_row.get("id", 0)
+                            post_db_id = int(str(raw_id)) if raw_id is not None else 0
+                            if post_db_id:
+                                ai_engine.generate_analysis(
+                                    post_id=post_db_id, 
+                                    text=post['post_text'], 
+                                    like_count=post['likes_count']
+                                )
                 except Exception as e:
-                    print(f"AI Analysis Error for post {post['original_post_id']}: {e}")
+                    print(f"AI Analysis Pipeline Error: {e}")
 
     background_tasks.add_task(run_pipeline)
     return {"message": "Data collection and AI analysis pipeline started in background."}
 
 
-# 2. 課題・ロジックツリーカタログ取得API（Reactフロントエンド用）
+# 2. 課題・ロジックツリーカタログ取得API
 @app.get("/api/issues")
-def get_issues(history_id: Optional[str] = Query(None, description="Gemini風の履歴IDで絞り込む場合")):
-    """
-    issue_catalog に蓄積された課題データを取得する。
-    """
+def get_issues(history_id: Optional[str] = Query(None)):
     try:
         query = supabase.table("issue_catalog").select("*")
         if history_id:
@@ -139,9 +201,6 @@ def get_issues(history_id: Optional[str] = Query(None, description="Gemini風の
 # 3. 感情分析・優先度スコア結果取得API
 @app.get("/api/analysis/{post_id}")
 def get_analysis_result(post_id: int):
-    """
-    指定したポストIDに紐づくAI解析結果を取得する。
-    """
     try:
         response = supabase.table("ai_analysis_results").select("*").eq("sns_post_id", post_id).execute()
         if not response.data:
@@ -154,21 +213,14 @@ def get_analysis_result(post_id: int):
 # 4. Gemini風の履歴一覧・詳細取得API
 @app.get("/api/histories")
 def get_chat_histories():
-    """
-    サイドバーに表示するための検索・分析履歴の一覧を取得する。
-    """
     try:
         response = supabase.table("chat_histories").select("id, query, created_at").order("created_at", desc=True).execute()
         return response.data
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-
 @app.get("/api/history/{history_id}")
 def get_chat_history_detail(history_id: str):
-    """
-    特定の履歴データ（What/Why/HowのツリーJSONを含む）を取得する。
-    """
     try:
         response = supabase.table("chat_histories").select("*").eq("id", history_id).execute()
         if not response.data:
@@ -177,67 +229,97 @@ def get_chat_history_detail(history_id: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+#5.削除
+@app.delete("/api/history/{history_id}")
+def delete_chat_history(history_id: str):
+    try:
+        response = supabase.table("chat_histories").delete().eq("id", history_id).execute()
+        return {"message": "履歴を削除しました", "data": response.data}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# 6. AI分析結果の一覧と、それに紐づくSNS投稿を取得するAPI
+@app.get("/api/ai-analyses")
+def get_ai_analyses_with_posts():
+    try:
+        # ai_analysis_results を取得しつつ、外部キー経由で sns_posts の情報も結合して取得する
+        response = supabase.table("ai_analysis_results").select(
+            "id, is_valid_issue, sentiment_score, priority_score, analyzed_at, sns_posts(id, platform, post_text, likes_count, collected_at)"
+        ).order("analyzed_at", desc=True).execute()
+        
+        return {"analyses": response.data}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 # --- 個別HTMLファイル配信設定 ---
 
 @app.get("/login.html", include_in_schema=False)
 def serve_login():
-    path = "static/login.html"
-    if not os.path.exists(path):
-        return {"error": "login.html not found in static folder."}
-    return FileResponse(path)
+    return FileResponse("static/login.html")
+
+@app.get("/reset.html", include_in_schema=False)
+def serve_reset():
+    return FileResponse("static/reset.html")
 
 @app.get("/login2.html", include_in_schema=False)
 def serve_login2():
-    path = "static/login2.html"
-    if not os.path.exists(path):
-        return {"error": "login2.html not found in static folder."}
-    return FileResponse(path)
+    return FileResponse("static/login2.html")
 
-# ログイン後のメインダッシュボード画面へのルーティング
-# ログイン後のメインダッシュボード画面へのルーティング
 @app.get("/app", include_in_schema=False)
 def serve_app_dashboard():
-    path = "static/mian.html"
-    if not os.path.exists(path):
-        return {"error": "mian.html not found in static folder."}
-    return FileResponse(path)
+    return FileResponse("static/mian.html")
+
+@app.get("/app/{history_id}", include_in_schema=False)
+def serve_app_history_dashboard(history_id: str):
+    return FileResponse("static/mian.html")
+
+@app.get("/reset2.html", include_in_schema=False)
+def serve_reset2():
+    return FileResponse("static/reset2.html")
 
 # --- 検索・D3.jsツリー用 API ---
-
 @app.get("/api/search")
 def search_issues(q: str = Query(..., description="検索キーワード")):
-    """
-    フロントエンドからの検索キーワードを受け取り、対応する課題データを返す
-    """
     try:
-        response = supabase.table("issue_catalog").select("*").ilike("ai_summary", f"%{q}%").execute()
+        # ai_analysis_results と sns_posts を結合し、AI分析済みで有効な投稿のみを対象にする
+        # または issue_catalog からキーワード検索を行う形に切り替える
+        response = supabase.table("ai_analysis_results").select(
+            "id, sentiment_score, priority_score, sns_posts!inner(id, platform, post_text, likes_count)"
+        ).eq("is_valid_issue", True).execute()
         
         posts = []
         if response.data:
             for item in response.data:
                 if isinstance(item, dict):
-                    posts.append({
-                        "title": item.get("ai_summary", "無題の課題"),
-                        "likes": item.get("total_priority_score", 0),
-                        "topic_key": item.get("sub_category", q)
-                    })
-            
-        if not posts:
-            posts = [
-                {"title": f"「{q}」に関する市民の意見・不満データ1", "likes": 42, "topic_key": q},
-                {"title": f"「{q}」に関するインフラの課題", "likes": 18, "topic_key": q}
-            ]
+                    post_info = item.get("sns_posts")
+                    # post_info が辞書型の場合のみ処理を進める
+                    if isinstance(post_info, dict):
+                        text = str(post_info.get("post_text") or "")
+                        # キーワードが本文に含まれているかフィルター
+                        if q.lower() in text.lower():
+                            posts.append({
+                                "title": text,
+                                "likes": post_info.get("likes_count", 0),
+                                "topic_key": post_info.get("platform", "X")
+                            })
 
-        return {"query": q, "posts": posts}
+        # 検索履歴の保存
+        history_id = str(uuid.uuid4())[:16]
+        try:
+            supabase.table("chat_histories").insert({
+                "id": history_id,
+                "query": q,
+                "results": {"posts": posts}
+            }).execute()
+        except Exception as insert_err:
+            print(f"History save error (non-fatal): {insert_err}")
+            
+        return {"query": q, "history_id": history_id, "posts": posts}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
+    
 @app.get("/api/tree/{topic_key}/{tree_type}")
 def get_d3_tree_data(topic_key: str, tree_type: str):
-    """
-    D3.jsのツリー描画用に、What / Why / How 別の階層構造JSONを返す
-    """
     try:
         tree_data = {
             "name": f"{topic_key} [{tree_type}]",
@@ -263,14 +345,11 @@ def get_d3_tree_data(topic_key: str, tree_type: str):
 
 @app.post("/api/posts")
 def create_post(post: PostCreate):
-    """
-    ウェブ画面から新しい投稿を保存するAPI
-    """
     try:
-        response = supabase.table("sns_posts").insert({
+        response = supabase.table("ai_analysis_results").insert({
             "platform": post.platform,
             "post_text": post.post_text,
-            "posted_at": "now()"
+            "collected_at": datetime.now(timezone.utc).isoformat()
         }).execute()
         return {"message": "投稿が保存されました", "data": response.data}
     except Exception as e:
@@ -279,11 +358,12 @@ def create_post(post: PostCreate):
 @app.get("/api/posts")
 def get_posts():
     try:
-        response = supabase.table("sns_posts").select("*").order("created_at",desc=True).execute()
-        return {"posts":response.data}
+        # スキーマ上の実際のタイムスタンプ列に合わせて collected_at で降順ソート
+        response = supabase.table("ai_analysis_results").select("*").order("sns_post_id", desc=True).execute()
+        return {"posts": response.data}
     except Exception as e:
-        raise HTTPException(status_code=500,detail=str(e))
-    
+        raise HTTPException(status_code=500, detail=str(e))
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)

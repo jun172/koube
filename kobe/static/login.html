@@ -2,8 +2,7 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <link rel="icon" href="/imag.png" type="image/png">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="icon" href="/static/imag.png" type="image/png">
     <title>アカウント登録</title>
     <style>
         /* 全体のスタイル設定 */
@@ -111,7 +110,7 @@
 <body>
 
     <div class="card">
-        <h2>アカウント作成</h2>
+        <h2>ログイン</h2>
         <p class="subtitle">必要事項を入力してください</p>
         
         <form onsubmit="handleRegister(event)">
@@ -129,13 +128,16 @@
             <div class="form-group">
                 <label>パスワード</label>
                 <input type="password" id="password" placeholder="••••••" required>
+                <div style="text-align: right; margin-top: 6px;">
+                    <a href="/reset.html" style="font-size: 12px; color: #666; text-decoration: none;">パスワードをお忘れの方はこちら</a>
+                </div>
             </div>
 
             <button type="submit" class="btn-primary">登録する</button>
         </form>
 
         <p class="footer-text">
-            すでにアカウントをお持ちの方は <a href="login.html" class="link-text">ログイン</a>
+            アカウント作成の方はこちら？ <a href="login2.html" class="link-text">ログイン</a>
         </p>
     </div>
 

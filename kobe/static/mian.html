@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <link rel="icon" href="/imag.png" type="image/png">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="icon" href="/static/imag.png" type="image/png">
     <title>神戸市SNS分析ダッシュボード</title>
     <!-- D3.js ライブラリ -->
     <script src="https://d3js.org/d3.v7.min.js"></script>
@@ -12,8 +12,8 @@
         .app-container { display: flex; height: 100vh; overflow: hidden; }
 
         /* サイドバー */
-        .sidebar { width: 260px; background-color: #1e1f20; padding: 24px 20px; border-right: 1px solid #333; box-sizing: border-box; display: flex; flex-direction: column; }
-        .sidebar h3 { font-size: 14px; color: #aaa; margin-top: 20px; margin-bottom: 20px; font-weight: normal; }
+        .sidebar { width: 260px; background-color: #1e1f20; padding: 24px 20px; border-right: 1px solid #333; box-sizing: border-box; display: flex; flex-direction: column; overflow-y: auto; }
+        .sidebar h3 { font-size: 14px; color: #aaa; margin-top: 20px; margin-bottom: 12px; font-weight: normal; }
         .sidebar ul { padding: 0; margin: 0; }
         .sidebar li { padding: 10px 0; font-size: 14px; cursor: pointer; list-style: none; color: #e3e3e3; }
         .sidebar li:hover { color: #8ab4f8; }
@@ -64,11 +64,15 @@
         <!-- 左側：検索履歴 -->
         <aside class="sidebar">
             <div id="welcome-user" class="user-welcome">ようこそ、ゲストさん</div>
-            <h3>検索履歴</h3>
-            <ul>
-                <li onclick="searchFromHistory('神戸市 不満')">神戸市 不満</li>
-                <li onclick="searchFromHistory('三ノ宮 交通')">三ノ宮 交通</li>
-            </ul>
+            
+            <button onclick="startNewChat()" style="margin: 15px 0; padding: 10px; background-color: #8ab4f8; color: #131314; border: none; border-radius: 8px; font-weight: bold; cursor: pointer;">
+                + 新しいチャット
+            </button>
+
+            <div id="history-list">
+                <h3>検索履歴</h3>
+                <!--ここに動的に挿入されます-->
+            </div>
         </aside>
 
         <!-- メイン画面 -->
@@ -96,16 +100,116 @@
     </div>
 
     <script>
-        // バックエンド（FastAPI等）のベースURL
         const API_BASE_URL = 'http://localhost:8000';
 
-        // ページ読み込み時にlocalStorageから名前を読み込んで表示
-        window.onload = function() {
+        // ページ読み込み時の処理（統合版）
+        window.onload = async function() {
+            // 1. ユーザー名の表示
             const name = localStorage.getItem("userName");
             if (name) {
                 document.getElementById("welcome-user").textContent = `ようこそ、${name} さん`;
             }
+
+            // 2. 履歴一覧のロード
+            await fetchAndRenderHistories();
+
+            // 3. パス（/app/{history_id}）またはクエリ（?id=xxx）から履歴IDを抽出し、データを自動復元
+            const pathParts = window.location.pathname.split('/').filter(Boolean);
+            // pathParts の例: ['app', 'xxxx-xxxx-...'] のようになっている場合
+            let targetHistoryId = null;
+            const appIndex = pathParts.indexOf('app');
+            if (appIndex !== -1 && pathParts.length > appIndex + 1) {
+                targetHistoryId = pathParts[appIndex + 1];
+            }
+
+            // クエリパラメータからのフォールバック
+            if (!targetHistoryId) {
+                const urlParams = new URLSearchParams(window.location.search);
+                targetHistoryId = urlParams.get('id');
+            }
+
+            if (targetHistoryId) {
+                await loadHistoryDetail(targetHistoryId);
+            }
         };
+
+        // 履歴一覧（/api/histories）を取得してサイドバーに表示
+        async function fetchAndRenderHistories() {
+            try {
+                const response = await fetch(`${API_BASE_URL}/api/histories`);
+                if (!response.ok) throw new Error("履歴一覧の取得に失敗しました");
+                
+                const histories = await response.json();
+                const historyListContainer = document.getElementById('history-list');
+                if (!historyListContainer) return;
+
+                let html = '<h3>検索履歴</h3>';
+                if (histories.length === 0) {
+                    html += '<p style="color:#aaa; font-size:12px; padding:5px;">履歴はまだありません</p>';
+                } else {
+                    histories.forEach(item => {
+                        html += `
+                            <div class="history-item" onclick="selectHistory('${item.id}')" style="cursor: pointer; padding: 8px 4px; border-bottom: 1px solid #333; font-size: 13px; color: #ccc;">
+                                ${item.query}
+                            </div>
+                        `;
+                    });
+                }
+                historyListContainer.innerHTML = html;
+
+            } catch (error) {
+                console.error("履歴のロードエラー:", error);
+            }
+        }
+
+        // サイドバーの履歴をクリックしたときの処理
+        async function selectHistory(historyId) {
+            const newUrl = `/app/${historyId}`;
+            window.history.pushState({ path: newUrl }, '', newUrl);
+            await loadHistoryDetail(historyId);
+        }
+
+        // 履歴の詳細データ（/api/history/{id}）を取得してメイン画面に描画
+        async function loadHistoryDetail(historyId) {
+            try {
+                const response = await fetch(`${API_BASE_URL}/api/history/${historyId}`);
+                if (!response.ok) throw new Error("指定された履歴が見つかりません");
+
+                const data = await response.json();
+
+                const displayArea = document.getElementById('mainDisplayArea');
+                displayArea.style.justifyContent = 'flex-start';
+                displayArea.innerHTML = ''; 
+
+                const posts = data.results && data.results.posts ? data.results.posts : [];
+                let postsHtml = '';
+
+                if (posts.length === 0) {
+                    postsHtml = `<p style="color:#aaa; font-size:13px; padding: 10px 0;">該当する投稿データが見つかりませんでした。</p>`;
+                } else {
+                    posts.forEach(post => {
+                        postsHtml += `
+                            <div class="post-item">
+                                <div class="post-header" onclick="toggleLogicTree(this, '${post.topic_key}')">
+                                    <span class="post-text">「${post.title}」</span> 
+                                    <span class="like-count">${post.likes} いいね</span>
+                                </div>
+                            </div>
+                        `;
+                    });
+                }
+
+                displayArea.innerHTML = `
+                    <div class="analysis-card">
+                        <h4>検索結果: ${data.query}</h4>
+                        ${postsHtml}
+                    </div>
+                `;
+
+            } catch (error) {
+                console.error("履歴詳細の取得エラー:", error);
+            }
+        }
 
         // タグを検索バーに追加
         function addTagToSearch(tag) {
@@ -114,13 +218,13 @@
             input.focus();
         }
 
-        // 履歴をクリックしたとき
+        // 履歴をクリックしたとき（テキスト検索の互換用）
         function searchFromHistory(query) {
             document.getElementById('searchInput').value = query;
             executeSearch();
         }
 
-        // 検索実行（DB/APIから検索結果を取得）
+        // 検索実行（DB/APIから検索結果を取得し、URLを /app/{id} に更新してサイドバーを自動更新）
         async function executeSearch() {
             const input = document.getElementById('searchInput');
             const query = input.value.trim();
@@ -132,6 +236,11 @@
             try {
                 const response = await fetch(`${API_BASE_URL}/api/search?q=${encodeURIComponent(query)}`);
                 const data = await response.json();
+
+                if (data.history_id) {
+                    const newUrl = `/app/${data.history_id}`;
+                    window.history.pushState({ path: newUrl }, '', newUrl);
+                }
 
                 let postsHtml = '';
                 if (!data.posts || data.posts.length === 0) {
@@ -151,12 +260,15 @@
 
                 displayArea.innerHTML += `
                     <div class="analysis-card">
-                        <h4>検索結果: ${data.query || query}</h4>
+                        <h4>検索（分析）結果: ${data.query || query}</h4>
                         ${postsHtml}
                     </div>
                 `;
                 input.value = '';
                 displayArea.scrollTop = displayArea.scrollHeight;
+
+                // 検索・投稿後にサイドバーの履歴一覧を自動更新
+                await fetchAndRenderHistories();
 
             } catch (error) {
                 console.error("検索データの取得に失敗しました:", error);
@@ -253,6 +365,85 @@
             const canvas = treeContainer.querySelector('.tree-canvas');
             drawTree(canvas, topicKey, 'What');
         }
+        // 新しいチャット（初期画面）を開始する関数
+function startNewChat() {
+    // 1. URLを初期の /app に変更（履歴をクリア）
+    const newUrl = '/app';
+    window.history.pushState({ path: newUrl }, '', newUrl);
+
+    // 2. メイン表示エリアを初期のウェルカム画面に戻す
+    const displayArea = document.getElementById('mainDisplayArea');
+    displayArea.style.justifyContent = 'center'; // 中央揃えに戻す
+    displayArea.innerHTML = `
+        <div class="welcome-container" id="welcomeView">
+            <h1 class="welcome-title">神戸市 SNS分析アシスタント</h1>
+            <p class="welcome-subtitle">分析したいキーワードやハッシュタグを入力してください</p>
+        </div>
+    `;
+
+    // 3. 入力欄をクリア
+    document.getElementById('searchInput').value = '';
+}
+// 履歴一覧を取得してサイドバーに表示（削除ボタン付き）
+async function fetchAndRenderHistories() {
+    try {
+        const response = await fetch(`${API_BASE_URL}/api/histories`);
+        if (!response.ok) throw new Error("履歴一覧の取得に失敗しました");
+        
+        const histories = await response.json();
+        const historyListContainer = document.getElementById('history-list');
+        if (!historyListContainer) return;
+
+        let html = '<h3>検索履歴</h3>';
+        if (histories.length === 0) {
+            html += '<p style="color:#aaa; font-size:12px; padding:5px;">履歴はまだありません</p>';
+        } else {
+            histories.forEach(item => {
+                html += `
+                    <div class="history-item" style="display: flex; justify-content: space-between; align-items: center; padding: 6px 0; border-bottom: 1px solid #333; font-size: 13px;">
+                        <span onclick="selectHistory('${item.id}')" style="cursor: pointer; color: #ccc; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; margin-right: 8px;">
+                            ${item.query}
+                        </span>
+                        <button onclick="deleteHistory(event, '${item.id}')" style="background: none; border: none; cursor: pointer; color: #aaa; font-size: 14px; padding: 2px 6px;" title="削除">
+                            🗑️
+                        </button>
+                    </div>
+                `;
+            });
+        }
+        historyListContainer.innerHTML = html;
+
+    } catch (error) {
+        console.error("履歴のロードエラー:", error);
+    }
+}
+
+// 個別履歴の削除処理
+async function deleteHistory(event, historyId) {
+    event.stopPropagation();
+
+    if (!confirm("この履歴を削除してもよろしいですか？")) return;
+
+    try {
+        const response = await fetch(`${API_BASE_URL}/api/history/${historyId}`, {
+            method: 'DELETE'
+        });
+
+        if (!response.ok) throw new Error("履歴の削除に失敗しました");
+
+        // 現在表示しているページが削除対象だった場合は初期画面に戻す
+        if (window.location.pathname.includes(historyId)) {
+            startNewChat();
+        }
+
+        // サイドバーの履歴一覧を再描画
+        await fetchAndRenderHistories();
+
+    } catch (error) {
+        console.error("削除エラー:", error);
+        alert("履歴の削除に失敗しました。");
+    }
+}
     </script>
 </body>
 </html>
