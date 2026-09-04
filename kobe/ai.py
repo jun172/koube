@@ -59,13 +59,12 @@ class AnalysisEngine:
                 contents=prompt,
             )
             
-            # 修正案
             raw_text = response.text if response.text else ""
             raw_text = raw_text.strip()
 
             if raw_text.startswith("```json"):
                 raw_text = raw_text[7:]
-            if raw_text.startswith("```"): # jsonという文字がないケースも考慮
+            if raw_text.startswith("```"): 
                 raw_text = raw_text[3:]
             if raw_text.endswith("```"):
                 raw_text = raw_text[:-3]
@@ -73,22 +72,60 @@ class AnalysisEngine:
             raw_text = raw_text.strip()
             data = json.loads(raw_text.strip())
 
-            # DBへ保存
-            self.supabase.table("ai_analysis_results").insert({
+            # DBへ解析結果を保存
+            analysis_res = self.supabase.table("ai_analysis_results").insert({
                 "sns_post_id": post_id,
                 "is_valid_issue": True,
                 "sentiment_score": data["sentiment_score"],
                 "priority_score": data["priority_score"]
             }).execute()
 
-            self._update_issue_catalog(data["what_tree"], data["priority_score"])
+            # 課題カタログ（issue_catalog）へのマージ保存を実装着手
+            self._update_issue_catalog(post_id, data.get("what_tree", {}), data["priority_score"], text)
 
         except Exception as e:
             print(f"AI Analysis Error: {e}")
 
-    def _update_issue_catalog(self, tree_data: Dict[str, Any], priority: int):
-        # TODO: ツリーデータをSupabaseの issue_catalog テーブルへ再帰的または構造的にマージ保存する処理
-        pass
+    def _update_issue_catalog(self, post_id: int, tree_data: Dict[str, Any], priority: int, original_text: str):
+        """
+        Whatツリーの階層構造から大・中・小カテゴリを抽出し、issue_catalog テーブルへ保存する。
+        さらに issue_post_relations を通じて投稿とのリレーションを確立する。
+        """
+        try:
+            main_cat = tree_data.get("name", "一般課題")
+            sub_cat = ""
+            detail_cat = ""
+            
+            children = tree_data.get("children", [])
+            if children:
+                sub_child = children[0]
+                sub_cat = sub_child.get("name", "")
+                sub_children = sub_child.get("children", [])
+                if sub_children:
+                    detail_cat = sub_children[0].get("name", "")
+
+            # 課題カタログへ挿入
+            catalog_res = self.supabase.table("issue_catalog").insert({
+                "main_category": main_cat,
+                "sub_category": sub_cat,
+                "detail_category": detail_cat,
+                "ai_summary": original_text[:100] + ("..." if len(original_text) > 100 else ""),
+                "total_priority_score": priority
+            }).execute()
+
+        # 安全にデータを取得して型エラーを回避する
+            if catalog_res and hasattr(catalog_res, "data") and isinstance(catalog_res.data, list) and len(catalog_res.data) > 0:
+                first_row = catalog_res.data[0]
+                if isinstance(first_row, dict) and "id" in first_row:
+                    issue_id = first_row["id"]
+                    # 投稿と課題の中間テーブルへ紐付け
+                    self.supabase.table("issue_post_relations").insert({
+                        "issue_id": issue_id,
+                        "sns_post_id": post_id
+                    }).execute()
+
+        except Exception as e:
+            print(f"Issue Catalog Update Error: {e}")
 
 # インスタンス化
 engine = AnalysisEngine()
