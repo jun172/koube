@@ -120,3 +120,17 @@ def insert_quiz_response(response_data: dict):
         print(f"Error inserting quiz_response: {e}")
         return None
     
+def insert_threads_comment(comment_data: dict):
+    """
+    Threadsのコメントデータを threads_comments テーブルへ挿入・更新する（comment_idで重複回避）
+    """
+    client = get_supabase_client()
+    try:
+        response = client.table("threads_comments").upsert(
+            comment_data, 
+            on_conflict="comment_id"
+        ).execute()
+        return response
+    except Exception as e:
+        print(f"Error inserting threads_comment: {e}")
+        return None

@@ -2,6 +2,7 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
+    <link rel="icon" href="/imag.png" type="image/png">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>神戸市SNS分析ダッシュボード</title>
     <!-- D3.js ライブラリ -->
@@ -11,11 +12,14 @@
         .app-container { display: flex; height: 100vh; overflow: hidden; }
 
         /* サイドバー */
-        .sidebar { width: 260px; background-color: #1e1f20; padding: 24px 20px; border-right: 1px solid #333; box-sizing: border-box; }
-        .sidebar h3 { font-size: 14px; color: #aaa; margin-top: 0; margin-bottom: 20px; font-weight: normal; }
+        .sidebar { width: 260px; background-color: #1e1f20; padding: 24px 20px; border-right: 1px solid #333; box-sizing: border-box; display: flex; flex-direction: column; }
+        .sidebar h3 { font-size: 14px; color: #aaa; margin-top: 20px; margin-bottom: 20px; font-weight: normal; }
         .sidebar ul { padding: 0; margin: 0; }
         .sidebar li { padding: 10px 0; font-size: 14px; cursor: pointer; list-style: none; color: #e3e3e3; }
         .sidebar li:hover { color: #8ab4f8; }
+
+        /* ユーザー名表示エリア */
+        .user-welcome { font-size: 14px; color: #8ab4f8; font-weight: bold; padding-bottom: 15px; border-bottom: 1px solid #333; }
 
         /* メインコンテンツ */
         .main-content { flex: 1; display: flex; flex-direction: column; position: relative; overflow: hidden; }
@@ -59,6 +63,7 @@
     <div class="app-container">
         <!-- 左側：検索履歴 -->
         <aside class="sidebar">
+            <div id="welcome-user" class="user-welcome">ようこそ、ゲストさん</div>
             <h3>検索履歴</h3>
             <ul>
                 <li onclick="searchFromHistory('神戸市 不満')">神戸市 不満</li>
@@ -92,7 +97,15 @@
 
     <script>
         // バックエンド（FastAPI等）のベースURL
-        const API_BASE_URL = 'http://localhost:8000'; // デプロイ時は実際のURLに変更してください
+        const API_BASE_URL = 'http://localhost:8000';
+
+        // ページ読み込み時にlocalStorageから名前を読み込んで表示
+        window.onload = function() {
+            const name = localStorage.getItem("userName");
+            if (name) {
+                document.getElementById("welcome-user").textContent = `ようこそ、${name} さん`;
+            }
+        };
 
         // タグを検索バーに追加
         function addTagToSearch(tag) {
@@ -114,12 +127,9 @@
             if(!query) return;
 
             const displayArea = document.getElementById('mainDisplayArea');
-            
-            // 初回検索時に中央揃えを解除して通常のスクロール表示にする
             displayArea.style.justifyContent = 'flex-start';
 
             try {
-                // FastAPIなどのバックエンド経由でSupabaseからデータを取得
                 const response = await fetch(`${API_BASE_URL}/api/search?q=${encodeURIComponent(query)}`);
                 const data = await response.json();
 
@@ -128,7 +138,6 @@
                     postsHtml = `<p style="color:#aaa; font-size:13px; padding: 10px 0;">該当する投稿データが見つかりませんでした。</p>`;
                 } else {
                     data.posts.forEach(post => {
-                        // post.topic_key はDB側で紐付けられているキー（例: '駅混雑'）
                         postsHtml += `
                             <div class="post-item">
                                 <div class="post-header" onclick="toggleLogicTree(this, '${post.topic_key}')">
@@ -140,7 +149,6 @@
                     });
                 }
 
-                // 検索結果カードを追加
                 displayArea.innerHTML += `
                     <div class="analysis-card">
                         <h4>検索結果: ${data.query || query}</h4>
@@ -156,13 +164,12 @@
             }
         }
 
-        // --- D3.js 描画関数（DBからツリー構造JSONを取得して描画） ---
+        // --- D3.js 描画関数 ---
         async function drawTree(container, topicKey, treeType) {
             d3.select(container).select("svg").remove();
 
             let rawData;
             try {
-                // FastAPI経由でSupabaseから指定されたトピックとタイプのツリーJSONを取得
                 const response = await fetch(`${API_BASE_URL}/api/tree/${encodeURIComponent(topicKey)}/${encodeURIComponent(treeType)}`);
                 rawData = await response.json();
 
@@ -185,7 +192,6 @@
             const root = d3.hierarchy(rawData);
             d3.tree().size([height - 30, width - 200])(root);
 
-            // リンク線描画
             svg.selectAll(".link")
                 .data(root.links())
                 .enter().append("path")
@@ -194,7 +200,6 @@
                 .attr("stroke-width", 1.5)
                 .attr("d", d3.linkHorizontal().x(d => d.y).y(d => d.x));
 
-            // ノード描画
             const node = svg.selectAll(".node")
                 .data(root.descendants())
                 .enter().append("g")
@@ -229,7 +234,6 @@
                 return;
             }
 
-            // 他のツリーが開いていれば閉じる
             parent.querySelectorAll('.tree-container').forEach(el => el.remove());
 
             treeContainer = document.createElement('div');

@@ -2,8 +2,9 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
+    <link rel="icon" href="/imag.png" type="image/png">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ログイン</title>
+    <title>アカウント登録</title>
     <style>
         /* 全体のスタイル設定 */
         body {
@@ -52,12 +53,7 @@
             color: #444;
         }
 
-        .label-row {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
-
+        input[type="text"],
         input[type="email"],
         input[type="password"] {
             width: 100%;
@@ -75,7 +71,7 @@
             border-color: #000;
         }
 
-        /* ログインボタン */
+        /* 登録ボタン */
         .btn-primary {
             width: 100%;
             background-color: #111;
@@ -94,7 +90,6 @@
             background-color: #333;
         }
 
-        /* リンクとフッター */
         .link-text {
             font-size: 12px;
             color: #666;
@@ -111,48 +106,67 @@
             color: #666;
             margin-top: 24px;
         }
-
-        /* ①と②を赤くするためのクラス */
-        .red-text {
-            color: red;
-        }
     </style>
 </head>
 <body>
 
     <div class="card">
-        <h2>ログイン</h2>
-        <p class="subtitle">アカウントにログインしてください</p>
+        <h2>アカウント作成</h2>
+        <p class="subtitle">必要事項を入力してください</p>
         
-        <form>
+        <form onsubmit="handleRegister(event)">
+            <!-- ① お名前入力欄の追加 -->
             <div class="form-group">
-                <label>メールアドレス  <span class="red-text">①</span></label>
-                <input type="email" placeholder="example@email.com" required>
+                <label>お名前</label>
+                <input type="text" id="name" placeholder="山田 太郎" required>
             </div>
 
             <div class="form-group">
-                <div class="label-row">
-                    <label>パスワード <span class="red-text">②</span></label>
-                    <a href="#" class="link-text">パスワードをお忘れですか？</a>
-                </div>
-                <input type="password" placeholder="••••••" required>
+                <label>メールアドレス</label>
+                <input type="email" id="email" placeholder="example@email.com" required>
             </div>
 
-            <button type="submit" class="btn-primary">ログイン</button>
+            <div class="form-group">
+                <label>パスワード</label>
+                <input type="password" id="password" placeholder="••••••" required>
+            </div>
+
+            <button type="submit" class="btn-primary">登録する</button>
         </form>
 
         <p class="footer-text">
-            アカウントをお持ちでない方は <a href="login2.html" class="link-text">新規登録</a>
+            すでにアカウントをお持ちの方は <a href="login.html" class="link-text">ログイン</a>
         </p>
     </div>
 
 </body>
 <script>
-    function handleLogin(event) {
-        event.preventDefault(); // ページがリロードされるのを防ぐ
+// 登録ボタンが押されたときの処理
+async function handleRegister(event) {
+    event.preventDefault();
+    const name = document.getElementById("name").value;
+    const email = document.getElementById("email").value;
+    const password = document.getElementById("password").value;
+
+    // 新規登録用のAPI（/api/signup）を叩く場合
+    const res = await fetch('/api/signup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password, name })
+    });
+
+    const result = await res.json();
+
+    if (res.ok) {
+        alert("登録が完了しました！");
+        localStorage.setItem("userName", name);
+        localStorage.setItem("userEmail", email);
         
-        // 飛ばしたいメイン画面のファイル名に変更する
-        window.location.href = 'index.html'; 
+        // メイン画面へ遷移
+        window.location.href = "/app";
+    } else {
+        alert("登録に失敗しました: " + (result.detail || "エラーが発生しました"));
     }
+}
 </script>
 </html>

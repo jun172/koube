@@ -4,6 +4,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional
 from supabase import Client
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 
 # 自作モジュール（プロジェクト内に配置する想定）
 from x import XApiClient
@@ -48,12 +50,24 @@ class UserSchema(BaseModel):
     email: str
     password: str
 
+# リクエストデータの形を定義
+class PostCreate(BaseModel):
+    post_text: str
+    platform: str = "WebDashboard"
 
-# --- ルーティング定義 ---
+# --- 静的ファイル・フロントエンド配信設定 ---
 
-@app.get("/")
-def read_root():
-    return {"status": "Unmute City Backend is running successfully."}
+os.makedirs("static", exist_ok=True)
+
+app.mount("/static", StaticFiles(directory="static"), name="static")
+
+# 💡 ルート (http://192.168.6.36:8000/) にアクセスしたときに login.html を返すように変更
+@app.get("/", include_in_schema=False)
+def serve_root():
+    path = "static/login.html"
+    if not os.path.exists(path):
+        return {"error": "login.html not found in static folder."}
+    return FileResponse(path)
 
 
 # --- 認証系 API ---
@@ -74,9 +88,6 @@ def signup(user: UserSchema):
 
 @app.post("/api/login")
 def login(user: UserSchema):
-    """
-    ログイン認証を行うAPI
-    """
     try:
         response = supabase.auth.sign_in_with_password({
             "email": user.email,
@@ -84,10 +95,7 @@ def login(user: UserSchema):
         })
         return {"message": "ログイン成功", "data": response}
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
-
-# --- SNSデータ・分析系 API ---
+        raise HTTPException(status_code=400, detail=str(e)) 
 
 # 1. SNSデータ収集 & AI解析トリガーAPI (バックグラウンド実行)
 @app.post("/api/collect")
@@ -180,6 +188,112 @@ def get_chat_history_detail(history_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# --- 個別HTMLファイル配信設定 ---
+
+@app.get("/login.html", include_in_schema=False)
+def serve_login():
+    path = "static/login.html"
+    if not os.path.exists(path):
+        return {"error": "login.html not found in static folder."}
+    return FileResponse(path)
+
+@app.get("/login2.html", include_in_schema=False)
+def serve_login2():
+    path = "static/login2.html"
+    if not os.path.exists(path):
+        return {"error": "login2.html not found in static folder."}
+    return FileResponse(path)
+
+# ログイン後のメインダッシュボード画面へのルーティング
+# ログイン後のメインダッシュボード画面へのルーティング
+@app.get("/app", include_in_schema=False)
+def serve_app_dashboard():
+    path = "static/mian.html"
+    if not os.path.exists(path):
+        return {"error": "mian.html not found in static folder."}
+    return FileResponse(path)
+
+# --- 検索・D3.jsツリー用 API ---
+
+@app.get("/api/search")
+def search_issues(q: str = Query(..., description="検索キーワード")):
+    """
+    フロントエンドからの検索キーワードを受け取り、対応する課題データを返す
+    """
+    try:
+        response = supabase.table("issue_catalog").select("*").ilike("ai_summary", f"%{q}%").execute()
+        
+        posts = []
+        if response.data:
+            for item in response.data:
+                if isinstance(item, dict):
+                    posts.append({
+                        "title": item.get("ai_summary", "無題の課題"),
+                        "likes": item.get("total_priority_score", 0),
+                        "topic_key": item.get("sub_category", q)
+                    })
+            
+        if not posts:
+            posts = [
+                {"title": f"「{q}」に関する市民の意見・不満データ1", "likes": 42, "topic_key": q},
+                {"title": f"「{q}」に関するインフラの課題", "likes": 18, "topic_key": q}
+            ]
+
+        return {"query": q, "posts": posts}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/tree/{topic_key}/{tree_type}")
+def get_d3_tree_data(topic_key: str, tree_type: str):
+    """
+    D3.jsのツリー描画用に、What / Why / How 別の階層構造JSONを返す
+    """
+    try:
+        tree_data = {
+            "name": f"{topic_key} [{tree_type}]",
+            "children": [
+                {
+                    "name": "主要因 1",
+                    "children": [
+                        {"name": "詳細データ A"},
+                        {"name": "詳細データ B"}
+                    ]
+                },
+                {
+                    "name": "主要因 2",
+                    "children": [
+                        {"name": "詳細データ C"}
+                    ]
+                }
+            ]
+        }
+        return tree_data
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/posts")
+def create_post(post: PostCreate):
+    """
+    ウェブ画面から新しい投稿を保存するAPI
+    """
+    try:
+        response = supabase.table("sns_posts").insert({
+            "platform": post.platform,
+            "post_text": post.post_text,
+            "posted_at": "now()"
+        }).execute()
+        return {"message": "投稿が保存されました", "data": response.data}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/posts")
+def get_posts():
+    try:
+        response = supabase.table("sns_posts").select("*").order("created_at",desc=True).execute()
+        return {"posts":response.data}
+    except Exception as e:
+        raise HTTPException(status_code=500,detail=str(e))
+    
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
