@@ -1,6 +1,5 @@
 import os
 from fastapi import FastAPI, BackgroundTasks, HTTPException, Query
-from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional
 from supabase import Client
@@ -16,15 +15,6 @@ app = FastAPI(
     title="Unmute City Backend",
     description="SNSから市民の不満や課題を収集・AI分析し、ロジックツリーを生成するAPI",
     version="1.0.0"
-)
-
-# CORS設定（Reactフロントエンドからのアクセスを許可）
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # 本番環境ではフロントエンドのURLに制限してください
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
 )
 
 # 各種クライアントの初期化
