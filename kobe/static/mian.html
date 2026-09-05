@@ -8,11 +8,11 @@
     <!-- D3.js ライブラリ -->
     <script src="https://d3js.org/d3.v7.min.js"></script>
     <style>
-        body { margin: 0; background-color: #131314; color: #e3e3e3; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+        body { margin: 0; background-color: #131314; color: #e3e3e3; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; overflow: hidden; }
         .app-container { display: flex; height: 100vh; overflow: hidden; }
 
         /* サイドバー */
-        .sidebar { width: 260px; background-color: #1e1f20; padding: 24px 20px; border-right: 1px solid #333; box-sizing: border-box; display: flex; flex-direction: column; overflow-y: auto; }
+        .sidebar { width: 260px; background-color: #1e1f20; padding: 24px 20px; border-right: 1px solid #333; box-sizing: border-box; display: flex; flex-direction: column; overflow-y: auto; flex-shrink: 0; }
         .sidebar h3 { font-size: 14px; color: #aaa; margin-top: 20px; margin-bottom: 12px; font-weight: normal; }
         .sidebar ul { padding: 0; margin: 0; }
         .sidebar li { padding: 10px 0; font-size: 14px; cursor: pointer; list-style: none; color: #e3e3e3; }
@@ -21,64 +21,104 @@
         /* ユーザー名表示エリア */
         .user-welcome { font-size: 14px; color: #8ab4f8; font-weight: bold; padding-bottom: 15px; border-bottom: 1px solid #333; }
 
+        /* 新しいチャットボタン */
+        .new-chat-btn { margin: 15px 0; padding: 10px; background-color: #8ab4f8; color: #131314; border: none; border-radius: 8px; font-weight: bold; cursor: pointer; transition: background-color 0.2s, transform 0.1s; }
+        .new-chat-btn:hover { background-color: #aecbfa; }
+        .new-chat-btn:active { transform: scale(0.98); }
+
         /* メインコンテンツ */
         .main-content { flex: 1; display: flex; flex-direction: column; position: relative; overflow: hidden; }
-        #mainDisplayArea { flex: 1; overflow-y: auto; padding: 40px; display: flex; flex-direction: column; align-items: center; justify-content: center; box-sizing: border-box; }
+        #mainDisplayArea { flex: 1; overflow-y: auto; padding: 40px; display: flex; flex-direction: column; align-items: center; justify-content: center; box-sizing: border-box; scroll-behavior: smooth; }
         
         /* 初期ウェルカム画面（Gemini風） */
-        .welcome-container { text-align: center; max-width: 600px; width: 100%; display: flex; flex-direction: column; align-items: center; gap: 24px; }
+        .welcome-container { text-align: center; max-width: 600px; width: 100%; display: flex; flex-direction: column; align-items: center; gap: 24px; animation: fadeIn 0.4s ease-out; }
         .welcome-title { font-size: 32px; font-weight: bold; background: linear-gradient(90deg, #8ab4f8, #c58af9); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin: 0; }
         .welcome-subtitle { font-size: 16px; color: #aaa; margin: 0; }
 
         /* 検索結果カード */
-        .analysis-card { background-color: #1e1f20; padding: 30px; border-radius: 16px; border: 1px solid #333; max-width: 800px; width: 100%; margin-bottom: 24px; box-sizing: border-box; }
-        .analysis-card h4 { margin-top: 0; margin-bottom: 24px; font-size: 16px; color: #e3e3e3; font-weight: normal; }
+        .analysis-card { background-color: #1e1f20; padding: 30px; border-radius: 16px; border: 1px solid #333; max-width: 800px; width: 100%; margin-bottom: 24px; box-sizing: border-box; box-shadow: 0 4px 20px rgba(0,0,0,0.3); animation: fadeIn 0.3s ease-out; }
+        .analysis-card h4 { margin-top: 0; margin-bottom: 24px; font-size: 16px; color: #e3e3e3; font-weight: normal; border-bottom: 1px solid #333; padding-bottom: 12px; }
         
-        .post-item { border-bottom: 1px solid #333; padding: 16px 0; display: flex; flex-direction: column; }
-        .post-item:last-child { border-bottom: none; }
-        .post-header { display: flex; justify-content: space-between; align-items: center; cursor: pointer; }
-        .post-text { text-decoration: underline; font-size: 15px; color: #e3e3e3; }
-        .like-count { color: #8ab4f8; font-weight: bold; font-size: 14px; white-space: nowrap; margin-left: 20px; }
+        /* 投稿アイテムカード */
+        .post-item { 
+            background: #171819; 
+            padding: 18px 20px; 
+            margin-bottom: 14px; 
+            border-radius: 12px; 
+            border: 1px solid #2d2e30; 
+            transition: border-color 0.2s ease, background 0.2s ease, box-shadow 0.2s ease;
+        }
+        .post-item:hover {
+            border-color: #8ab4f8;
+            background: #1a1b1d;
+            box-shadow: 0 4px 12px rgba(138, 180, 248, 0.08);
+        }
+        .post-header { display: flex; flex-direction: column; cursor: pointer; }
+        
+        /* バッジやテキストのスタイル */
+        .post-summary { font-weight: 600; color: #ffffff; font-size: 15px; margin-bottom: 6px; line-height: 1.4; }
+        .post-original { font-size: 13px; color: #9aa0a6; margin-bottom: 8px; line-height: 1.4; background: rgba(255,255,255,0.03); padding: 8px 10px; border-radius: 6px; border-left: 3px solid #8ab4f8; }
+        .post-footer { display: flex; justify-content: space-between; align-items: center; margin-top: 8px; font-size: 12px; color: #8ab4f8; }
+        .like-badge { background: rgba(138, 180, 248, 0.1); padding: 3px 8px; border-radius: 12px; color: #8ab4f8; font-weight: 500; }
+        .date-badge { color: #9aa0a6; font-size: 11px; }
 
         /* 下部入力エリア */
-        .bottom-input-section { padding: 20px 40px 30px; display: flex; flex-direction: column; align-items: center; gap: 12px; background-color: #131314; width: 100%; box-sizing: border-box; }
+        .bottom-input-section { padding: 20px 40px 30px; display: flex; flex-direction: column; align-items: center; gap: 12px; background-color: #131314; width: 100%; box-sizing: border-box; border-top: 1px solid rgba(255,255,255,0.05); }
         .tag-container { display: flex; gap: 10px; justify-content: center; }
-        .tag { background-color: #1e1f20; padding: 8px 16px; border-radius: 20px; font-size: 13px; cursor: pointer; border: 1px solid #444746; color: #e3e3e3; transition: background 0.2s; }
-        .tag:hover { background-color: #333537; }
+        .tag { background-color: #1e1f20; padding: 6px 14px; border-radius: 20px; font-size: 13px; cursor: pointer; border: 1px solid #444746; color: #e3e3e3; transition: background 0.2s, border-color 0.2s; }
+        .tag:hover { background-color: #333537; border-color: #8ab4f8; }
         
         .search-container { position: relative; width: 100%; max-width: 600px; }
-        .search-input { width: 100%; padding: 16px 24px; padding-right: 60px; border-radius: 30px; border: 1px solid #444746; background: #1e1f20; color: #e3e3e3; outline: none; box-sizing: border-box; font-size: 15px; }
-        .search-icon-button { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); background: #8ab4f8; border: none; border-radius: 50%; width: 40px; height: 40px; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 16px; }
+        .search-input { width: 100%; padding: 16px 24px; padding-right: 60px; border-radius: 30px; border: 1px solid #444746; background: #1e1f20; color: #e3e3e3; outline: none; box-sizing: border-box; font-size: 15px; transition: border-color 0.2s, box-shadow 0.2s; }
+        .search-input:focus { border-color: #8ab4f8; box-shadow: 0 0 0 2px rgba(138, 180, 248, 0.2); }
+        .search-icon-button { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); background: #8ab4f8; border: none; border-radius: 50%; width: 40px; height: 40px; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 16px; transition: background 0.2s, transform 0.1s; }
+        .search-icon-button:hover { background: #aecbfa; }
+        .search-icon-button:active { transform: translateY(-50%) scale(0.95); }
 
-        /* ツリーコンテナ＆What/Why/How切り替えタブ */
-        .tree-container { margin-top: 15px; padding: 20px; background-color: #131314; border-radius: 12px; border: 1px solid #444746; }
+        /* ツリーコンテナ＆タブ */
+        .tree-container { margin-top: 15px; padding: 20px; background-color: #131314; border-radius: 12px; border: 1px solid #444746; animation: expandDown 0.3s ease-out; overflow: hidden; }
         .tree-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
         .tree-tabs { display: flex; gap: 8px; }
-        .tree-tab-btn { background-color: #1e1f20; color: #aaa; border: 1px solid #444746; padding: 6px 14px; border-radius: 6px; font-size: 12px; cursor: pointer; }
+        .tree-tab-btn { background-color: #1e1f20; color: #aaa; border: 1px solid #444746; padding: 6px 14px; border-radius: 6px; font-size: 12px; cursor: pointer; transition: all 0.2s; }
+        .tree-tab-btn:hover { color: #e3e3e3; border-color: #8ab4f8; }
         .tree-tab-btn.active { background-color: #8ab4f8; color: #131314; font-weight: bold; border-color: #8ab4f8; }
-        .tree-canvas { width: 100%; display: flex; justify-content: center; }
+        .tree-canvas { width: 100%; display: flex; justify-content: center; min-height: 160px; }
+
+        /* 履歴アイテム */
+        .history-item { display: flex; justify-content: space-between; align-items: center; padding: 8px 10px; border-radius: 6px; margin-bottom: 4px; transition: background 0.15s; }
+        .history-item:hover { background: rgba(255, 255, 255, 0.04); }
+        .history-item span { cursor: pointer; color: #ccc; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; margin-right: 8px; font-size: 13px; }
+        .history-item span:hover { color: #8ab4f8; }
+
+        /* アニメーション */
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(6px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes expandDown {
+            from { opacity: 0; max-height: 0; padding-top: 0; padding-bottom: 0; }
+            to { opacity: 1; max-height: 300px; padding: 20px; }
+        }
     </style>
 </head>
 <body>
     <div class="app-container">
-        <!-- 左側：検索履歴 -->
+        <!-- サイドバー -->
         <aside class="sidebar">
             <div id="welcome-user" class="user-welcome">ようこそ、ゲストさん</div>
             
-            <button onclick="startNewChat()" style="margin: 15px 0; padding: 10px; background-color: #8ab4f8; color: #131314; border: none; border-radius: 8px; font-weight: bold; cursor: pointer;">
+            <button class="new-chat-btn" onclick="startNewChat()">
                 + 新しいチャット
             </button>
 
             <div id="history-list">
                 <h3>検索履歴</h3>
-                <!--ここに動的に挿入されます-->
             </div>
         </aside>
 
         <!-- メイン画面 -->
         <main class="main-content">
             <div id="mainDisplayArea">
-                <!-- 初期表示：Gemini風チャットウェルカム画面 -->
                 <div class="welcome-container" id="welcomeView">
                     <h1 class="welcome-title">神戸市 SNS分析アシスタント</h1>
                     <p class="welcome-subtitle">分析したいキーワードやハッシュタグを入力してください</p>
@@ -102,27 +142,21 @@
     <script>
         const API_BASE_URL = 'http://localhost:8000';
 
-        // ページ読み込み時の処理（統合版）
         window.onload = async function() {
-            // 1. ユーザー名の表示
             const name = localStorage.getItem("userName");
             if (name) {
                 document.getElementById("welcome-user").textContent = `ようこそ、${name} さん`;
             }
 
-            // 2. 履歴一覧のロード
             await fetchAndRenderHistories();
 
-            // 3. パス（/app/{history_id}）またはクエリ（?id=xxx）から履歴IDを抽出し、データを自動復元
             const pathParts = window.location.pathname.split('/').filter(Boolean);
-            // pathParts の例: ['app', 'xxxx-xxxx-...'] のようになっている場合
             let targetHistoryId = null;
             const appIndex = pathParts.indexOf('app');
             if (appIndex !== -1 && pathParts.length > appIndex + 1) {
                 targetHistoryId = pathParts[appIndex + 1];
             }
 
-            // クエリパラメータからのフォールバック
             if (!targetHistoryId) {
                 const urlParams = new URLSearchParams(window.location.search);
                 targetHistoryId = urlParams.get('id');
@@ -133,7 +167,16 @@
             }
         };
 
-        // 履歴一覧（/api/histories）を取得してサイドバーに表示
+        function renderHashtags(text) {
+            if (!text) return '';
+            const matches = text.match(/#[\w\u3000-\u30ff\u4e00-\u9faf]+/g);
+            if (!matches || matches.length === 0) return '';
+
+            return '<div class="post-tags" style="margin-top: 8px; display: flex; flex-wrap: wrap; gap: 6px;">' +
+                matches.map(tag => `<span onclick="event.stopPropagation(); addTagToSearch('${tag}')" style="background: rgba(138,180,248,0.1); color: #8ab4f8; padding: 2px 8px; border-radius: 4px; font-size: 11px; cursor: pointer; border: 1px solid rgba(138,180,248,0.2); transition: background 0.2s;">${tag}</span>`).join('') +
+                '</div>';
+        }
+
         async function fetchAndRenderHistories() {
             try {
                 const response = await fetch(`${API_BASE_URL}/api/histories`);
@@ -149,8 +192,13 @@
                 } else {
                     histories.forEach(item => {
                         html += `
-                            <div class="history-item" onclick="selectHistory('${item.id}')" style="cursor: pointer; padding: 8px 4px; border-bottom: 1px solid #333; font-size: 13px; color: #ccc;">
-                                ${item.query}
+                            <div class="history-item">
+                                <span onclick="selectHistory('${item.id}')">
+                                    ${item.query}
+                                </span>
+                                <button onclick="deleteHistory(event, '${item.id}')" style="background: none; border: none; cursor: pointer; color: #aaa; font-size: 14px; padding: 2px 6px;" title="削除" onmouseover="this.style.color='#ff8ab4'" onmouseout="this.style.color='#aaa'">
+                                    🗑️
+                                </button>
                             </div>
                         `;
                     });
@@ -162,21 +210,18 @@
             }
         }
 
-        // サイドバーの履歴をクリックしたときの処理
         async function selectHistory(historyId) {
             const newUrl = `/app/${historyId}`;
             window.history.pushState({ path: newUrl }, '', newUrl);
             await loadHistoryDetail(historyId);
         }
 
-        // 履歴の詳細データ（/api/history/{id}）を取得してメイン画面に描画
         async function loadHistoryDetail(historyId) {
             try {
                 const response = await fetch(`${API_BASE_URL}/api/history/${historyId}`);
                 if (!response.ok) throw new Error("指定された履歴が見つかりません");
 
                 const data = await response.json();
-
                 const displayArea = document.getElementById('mainDisplayArea');
                 displayArea.style.justifyContent = 'flex-start';
                 displayArea.innerHTML = ''; 
@@ -187,12 +232,28 @@
                 if (posts.length === 0) {
                     postsHtml = `<p style="color:#aaa; font-size:13px; padding: 10px 0;">該当する投稿データが見つかりませんでした。</p>`;
                 } else {
-                    posts.forEach(post => {
+                    posts.forEach((post, index) => {
+                        const postId = post.id || `post_${index}`;
+                        const textForTags = post.title || post.post_text || '';
+                        const displaySummary = post.summary ? `<div class="post-summary">📌 ${post.summary}</div>` : '';
+                        const tagsHtml = renderHashtags(textForTags);
+
+                        let dateStr = '';
+                        if (post.posted_at) {
+                            const dateObj = new Date(post.posted_at);
+                            dateStr = `<span class="date-badge">📅 ${dateObj.toLocaleString()}</span>`;
+                        }
+
                         postsHtml += `
                             <div class="post-item">
                                 <div class="post-header" onclick="toggleLogicTree(this, '${post.topic_key}')">
-                                    <span class="post-text">「${post.title}」</span> 
-                                    <span class="like-count">${post.likes} いいね</span>
+                                    ${displaySummary}
+                                    <div class="post-original">💬 「${textForTags}」</div>
+                                    ${tagsHtml}
+                                    <div class="post-footer">
+                                        <span class="like-badge">❤️ ${post.likes || 0} いいね</span>
+                                        ${dateStr}
+                                    </div>
                                 </div>
                             </div>
                         `;
@@ -211,20 +272,12 @@
             }
         }
 
-        // タグを検索バーに追加
         function addTagToSearch(tag) {
             const input = document.getElementById('searchInput');
             input.value = (input.value ? input.value + ' ' : '') + tag;
             input.focus();
         }
 
-        // 履歴をクリックしたとき（テキスト検索の互換用）
-        function searchFromHistory(query) {
-            document.getElementById('searchInput').value = query;
-            executeSearch();
-        }
-
-        // 検索実行（DB/APIから検索結果を取得し、URLを /app/{id} に更新してサイドバーを自動更新）
         async function executeSearch() {
             const input = document.getElementById('searchInput');
             const query = input.value.trim();
@@ -242,32 +295,49 @@
                     window.history.pushState({ path: newUrl }, '', newUrl);
                 }
 
+                const posts = data.results && data.results.posts ? data.results.posts : (data.posts || []);
                 let postsHtml = '';
-                if (!data.posts || data.posts.length === 0) {
+
+                if (posts.length === 0) {
                     postsHtml = `<p style="color:#aaa; font-size:13px; padding: 10px 0;">該当する投稿データが見つかりませんでした。</p>`;
                 } else {
-                    data.posts.forEach(post => {
+                    posts.forEach((post, index) => {
+                        const postId = post.id || `post_${index}`;
+                        const textForTags = post.title || post.post_text || '';
+                        const displaySummary = post.summary ? `<div class="post-summary">📌 ${post.summary}</div>` : '';
+                        const tagsHtml = renderHashtags(textForTags);
+
+                        let dateStr = '';
+                        if (post.posted_at) {
+                            const dateObj = new Date(post.posted_at);
+                            dateStr = `<span class="date-badge">📅 ${dateObj.toLocaleString()}</span>`;
+                        }
+
                         postsHtml += `
                             <div class="post-item">
                                 <div class="post-header" onclick="toggleLogicTree(this, '${post.topic_key}')">
-                                    <span class="post-text">「${post.title}」</span> 
-                                    <span class="like-count">${post.likes} いいね</span>
+                                    ${displaySummary}
+                                    <div class="post-original">💬 「${textForTags}」</div>
+                                    ${tagsHtml}
+                                    <div class="post-footer">
+                                        <span class="like-badge">❤️ ${post.likes || 0} いいね</span>
+                                        ${dateStr}
+                                    </div>
                                 </div>
                             </div>
                         `;
                     });
                 }
 
-                displayArea.innerHTML += `
+                displayArea.innerHTML = `
                     <div class="analysis-card">
                         <h4>検索（分析）結果: ${data.query || query}</h4>
                         ${postsHtml}
                     </div>
                 `;
                 input.value = '';
-                displayArea.scrollTop = displayArea.scrollHeight;
+                displayArea.scrollTo({ top: displayArea.scrollHeight, behavior: 'smooth' });
 
-                // 検索・投稿後にサイドバーの履歴一覧を自動更新
                 await fetchAndRenderHistories();
 
             } catch (error) {
@@ -276,10 +346,9 @@
             }
         }
 
-        // --- D3.js 描画関数 ---
         async function drawTree(container, topicKey, treeType) {
-            d3.select(container).select("svg").remove();
-
+            const svgSelection = d3.select(container).select("svg");
+            
             let rawData;
             try {
                 const response = await fetch(`${API_BASE_URL}/api/tree/${encodeURIComponent(topicKey)}/${encodeURIComponent(treeType)}`);
@@ -289,17 +358,24 @@
                     rawData = { name: topicKey, children: [{ name: "解析データなし" }] };
                 }
             } catch (error) {
-                console.error("ツリーデータの取得に失敗しました:", error);
                 rawData = { name: topicKey, children: [{ name: "データ取得エラー" }] };
             }
+
+            svgSelection.remove();
 
             const width = 600, height = 160;
             const svg = d3.select(container)
                 .append("svg")
                 .attr("width", width)
                 .attr("height", height)
+                .style("opacity", 0)
                 .append("g")
                 .attr("transform", "translate(80,10)");
+
+            d3.select(container).select("svg")
+                .transition()
+                .duration(300)
+                .style("opacity", 1);
 
             const root = d3.hierarchy(rawData);
             d3.tree().size([height - 30, width - 200])(root);
@@ -310,6 +386,7 @@
                 .attr("fill", "none")
                 .attr("stroke", "#8ab4f8")
                 .attr("stroke-width", 1.5)
+                .attr("opacity", 0.7)
                 .attr("d", d3.linkHorizontal().x(d => d.y).y(d => d.x));
 
             const node = svg.selectAll(".node")
@@ -317,16 +394,25 @@
                 .enter().append("g")
                 .attr("transform", d => `translate(${d.y},${d.x})`);
 
-            node.append("circle").attr("r", 4).attr("fill", "#ffffff");
+            node.append("circle")
+                .attr("r", 0)
+                .attr("fill", "#ffffff")
+                .transition()
+                .duration(300)
+                .attr("r", 4);
+
             node.append("text")
                 .attr("dy", 4)
                 .attr("x", 10)
                 .attr("font-size", "12px")
                 .attr("fill", "#e3e3e3")
-                .text(d => d.data.name);
+                .style("opacity", 0)
+                .text(d => d.data.name)
+                .transition()
+                .duration(300)
+                .style("opacity", 1);
         }
 
-        // --- タブ切り替え処理 ---
         function switchTreeTab(button, topicKey, treeType) {
             const container = button.closest('.tree-container');
             container.querySelectorAll('.tree-tab-btn').forEach(btn => btn.classList.remove('active'));
@@ -336,13 +422,13 @@
             drawTree(canvas, topicKey, treeType);
         }
 
-        // --- ツリー表示トグル ---
         function toggleLogicTree(headerElement, topicKey) {
             const parent = headerElement.parentElement;
             let treeContainer = parent.querySelector('.tree-container');
             
             if (treeContainer) {
-                treeContainer.remove();
+                treeContainer.style.animation = 'fadeIn 0.2s ease-out reverse';
+                setTimeout(() => treeContainer.remove(), 180);
                 return;
             }
 
@@ -365,85 +451,44 @@
             const canvas = treeContainer.querySelector('.tree-canvas');
             drawTree(canvas, topicKey, 'What');
         }
-        // 新しいチャット（初期画面）を開始する関数
-function startNewChat() {
-    // 1. URLを初期の /app に変更（履歴をクリア）
-    const newUrl = '/app';
-    window.history.pushState({ path: newUrl }, '', newUrl);
 
-    // 2. メイン表示エリアを初期のウェルカム画面に戻す
-    const displayArea = document.getElementById('mainDisplayArea');
-    displayArea.style.justifyContent = 'center'; // 中央揃えに戻す
-    displayArea.innerHTML = `
-        <div class="welcome-container" id="welcomeView">
-            <h1 class="welcome-title">神戸市 SNS分析アシスタント</h1>
-            <p class="welcome-subtitle">分析したいキーワードやハッシュタグを入力してください</p>
-        </div>
-    `;
+        function startNewChat() {
+            const newUrl = '/app';
+            window.history.pushState({ path: newUrl }, '', newUrl);
 
-    // 3. 入力欄をクリア
-    document.getElementById('searchInput').value = '';
-}
-// 履歴一覧を取得してサイドバーに表示（削除ボタン付き）
-async function fetchAndRenderHistories() {
-    try {
-        const response = await fetch(`${API_BASE_URL}/api/histories`);
-        if (!response.ok) throw new Error("履歴一覧の取得に失敗しました");
-        
-        const histories = await response.json();
-        const historyListContainer = document.getElementById('history-list');
-        if (!historyListContainer) return;
+            const displayArea = document.getElementById('mainDisplayArea');
+            displayArea.style.justifyContent = 'center';
+            displayArea.innerHTML = `
+                <div class="welcome-container" id="welcomeView">
+                    <h1 class="welcome-title">神戸市 SNS分析アシスタント</h1>
+                    <p class="welcome-subtitle">分析したいキーワードやハッシュタグを入力してください</p>
+                </div>
+            `;
 
-        let html = '<h3>検索履歴</h3>';
-        if (histories.length === 0) {
-            html += '<p style="color:#aaa; font-size:12px; padding:5px;">履歴はまだありません</p>';
-        } else {
-            histories.forEach(item => {
-                html += `
-                    <div class="history-item" style="display: flex; justify-content: space-between; align-items: center; padding: 6px 0; border-bottom: 1px solid #333; font-size: 13px;">
-                        <span onclick="selectHistory('${item.id}')" style="cursor: pointer; color: #ccc; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; margin-right: 8px;">
-                            ${item.query}
-                        </span>
-                        <button onclick="deleteHistory(event, '${item.id}')" style="background: none; border: none; cursor: pointer; color: #aaa; font-size: 14px; padding: 2px 6px;" title="削除">
-                            🗑️
-                        </button>
-                    </div>
-                `;
-            });
-        }
-        historyListContainer.innerHTML = html;
-
-    } catch (error) {
-        console.error("履歴のロードエラー:", error);
-    }
-}
-
-// 個別履歴の削除処理
-async function deleteHistory(event, historyId) {
-    event.stopPropagation();
-
-    if (!confirm("この履歴を削除してもよろしいですか？")) return;
-
-    try {
-        const response = await fetch(`${API_BASE_URL}/api/history/${historyId}`, {
-            method: 'DELETE'
-        });
-
-        if (!response.ok) throw new Error("履歴の削除に失敗しました");
-
-        // 現在表示しているページが削除対象だった場合は初期画面に戻す
-        if (window.location.pathname.includes(historyId)) {
-            startNewChat();
+            document.getElementById('searchInput').value = '';
         }
 
-        // サイドバーの履歴一覧を再描画
-        await fetchAndRenderHistories();
+        async function deleteHistory(event, historyId) {
+            event.stopPropagation();
 
-    } catch (error) {
-        console.error("削除エラー:", error);
-        alert("履歴の削除に失敗しました。");
-    }
-}
+            try {
+                const response = await fetch(`${API_BASE_URL}/api/history/${historyId}`, {
+                    method: 'DELETE'
+                });
+
+                if (!response.ok) throw new Error("履歴の削除に失敗しました");
+
+                if (window.location.pathname.includes(historyId)) {
+                    startNewChat();
+                }
+
+                await fetchAndRenderHistories();
+
+            } catch (error) {
+                console.error("削除エラー:", error);
+                alert("履歴の削除に失敗しました。");
+            }
+        }
     </script>
 </body>
 </html>

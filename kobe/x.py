@@ -3,7 +3,7 @@ import time
 import requests
 from datetime import datetime, timezone
 from typing import List, Dict
-from database import get_supabase_client
+from ai import get_ai_engine  # ai.py を直接呼び出す
 
 # X API設定
 X_API_BEARER_TOKEN = os.environ.get("X_API_BEARER_TOKEN")
@@ -14,7 +14,8 @@ class XApiClient:
         self.headers = {
             "Authorization": f"Bearer {X_API_BEARER_TOKEN}"
         }
-        self.supabase = get_supabase_client()
+        # Ai.py 側のエンジンを初期化
+        self.ai_engine = get_ai_engine()
 
     def fetch_posts_by_keyword(self, keyword: str, max_results: int = 10) -> List[Dict]:
         """
@@ -41,7 +42,6 @@ class XApiClient:
             data = response.json()
             tweets = data.get("data", [])
 
-            # APIレスポンスの includes からユーザー情報を取得し、IDごとのフォロワー数をマッピング
             includes = data.get("includes", {})
             users = includes.get("users", [])
             user_followers_map = {}
@@ -55,7 +55,6 @@ class XApiClient:
                 author_id = tweet.get("author_id")
                 followers_count = user_followers_map.get(author_id, 0)
                 
-                # フォロワー数が1万人以上のアカウントの投稿はスキップ
                 if followers_count >= 10000:
                     continue
 
@@ -76,35 +75,37 @@ class XApiClient:
         except Exception as e:
             print(f"Network/Connection Error in X.py: {e}")
             return []
-
-    def save_posts_to_db(self, posts: List[Dict]):
+        
+    def send_to_ai(self, posts: List[Dict]):
         """
-        取得した投稿を Supabase (sns_posts) に保存する
-        original_post_id の UNIQUE 制約により重複収集を防止
+        取得した投稿データをそのまま Ai.py へ引き渡して分析を実行する
         """
         for post in posts:
             try:
-                self.supabase.table("sns_posts").upsert(
-                    post, 
-                    on_conflict="original_post_id"
-                ).execute()
-                print(f"Saved/Updated post ID: {post['original_post_id']}")
+                print(f"-> Ai.pyへデータを送信中 (Original ID: {post['original_post_id']})")
+                
+                # ai.py の generate_analysis には text と like_count だけを渡す
+                self.ai_engine.generate_analysis(
+                    text=post["post_text"],
+                    like_count=post["likes_count"]
+                )
             except Exception as e:
-                print(f"DB Insert Error: {e}")
-
+                print(f"AI Processing Error: {e}")
+                
     def run_collection_task(self, keywords: List[str]):
         """
-        X（Twitter）データ収集タスクを実行する
+        Xからデータを取得し、直接Ai.pyへ流し込むタスクを実行する
         """
-        print("X (Twitter) データ収集タスクを開始します...")
+        print("X (Twitter) データ収集およびAI連携タスクを開始します...")
         for keyword in keywords:
             posts = self.fetch_posts_by_keyword(keyword)
             if posts:
-                self.save_posts_to_db(posts)
+                self.send_to_ai(posts)
             
             time.sleep(2)
+        print("すべての処理が完了しました。")
 
 if __name__ == "__main__":
     client = XApiClient()
-    target_keywords = ["神戸市 不満", "神戸市 改善", "三宮駅 混雑","垂水区",]
+    target_keywords = ["神戸市 不満", "神戸市 改善", "三宮駅 混雑", "垂水区"]
     client.run_collection_task(target_keywords)

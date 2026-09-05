@@ -13,7 +13,7 @@ import uuid
 # 自作モジュール
 from x import XApiClient
 from ai import get_ai_engine
-from database import get_supabase_client
+from database import get_supabase_client,insert_sns_post, upsert_chat_history
 
 app = FastAPI(
     title="Unmute City Backend",
@@ -29,7 +29,14 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
+# 投稿データを保存する例
+insert_sns_post({
+    "platform": "X",
+    "original_post_id": "12345678",
+    "post_text": "テスト投稿 #神戸",
+    "likes_count": 5,
+    "posted_at": "2026-09-05T20:00:00+09:00"
+})
 # 各種クライアントの初期化
 x_client = XApiClient()
 supabase: Client = get_supabase_client()

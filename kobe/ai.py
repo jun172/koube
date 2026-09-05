@@ -28,6 +28,7 @@ class AnalysisEngine:
         1件のSNS投稿をGeminiで要約・分析し、ai_analysis_resultsとissue_catalogに保存する
         """
         try:
+            
             prompt = f"""
             以下の市民の投稿を分析・要約し、必ず以下のJSON形式のみで返してください（余計な解説やマークダウン以外のテキストは不要です）。
             投稿内容: "{text}"
@@ -38,6 +39,7 @@ class AnalysisEngine:
             2. sentiment_score: -1.0(最悪)〜1.0(最高)の感情スコア（数値）
             3. what_tree: 大分類、中分類、小分類を含むツリー構造 (name, children)
             4. priority_score: 0-100の優先度（いいね数と深刻度で算出、整数）
+            5. tags: 投稿内容を象徴する日本語のキーワード・ハッシュタグのリスト（例: ["#再開発", "#神戸市", "#市民の声"]。2〜4個程度）
             """
             
             response = client.models.generate_content(
@@ -159,6 +161,7 @@ class AnalysisEngine:
 
         except Exception as e:
             print(f"Batch Processing Error: {e}")
+
 # インスタンス化
 engine = AnalysisEngine()
 

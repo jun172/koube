@@ -1,6 +1,7 @@
 import os
 from supabase import create_client, Client
 from dotenv import load_dotenv
+from typing import Dict, List, Union, Any
 
 # .env ファイルから環境変数を読み込む
 load_dotenv()
@@ -23,7 +24,7 @@ def get_supabase_client() -> Client:
 
 # --- 各テーブルへのデータ操作（CRUD） ---
 
-def upsert_chat_history(history_id: str, query: str, results: list):
+def upsert_chat_history(history_id: str, query: str, results: Union[List[Any], Dict[str, Any]]):
     """
     1. chat_histories テーブルへGemini風の検索・分析履歴を保存・更新する
     """
