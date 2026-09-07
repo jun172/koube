@@ -198,6 +198,7 @@
         // 現在表示しているデータを保持する変数（並び替え用）
         let currentPosts = [];
         let currentQueryTitle = "";
+        let currentSortOrder = 'newest';//並び順
 
         window.onload = async function() {
             const name = localStorage.getItem("userName");
@@ -260,7 +261,7 @@
                                 <span onclick="selectHistory('${item.id}')">
                                     ${item.query}
                                 </span>
-                                <button onclick="deleteHistory(event, '${item.id}')" style="background: none; border: none; cursor: pointer; color: #aaa; font-size: 14px; padding: 2px 6px;" title="削除" onmouseover="this.style.color='#ff8ab4'" onmouseout="this.style.color='#aaa'">
+                                <button onclick="deleteHistory(event, '${item.id}')" style="background: none; border: none; border-radius: 6px; cursor: pointer; color: #aaa; font-size: 14px; padding: 4px 8px; transition: background 0.2s, color 0.2s;" title="削除" onmouseover="this.style.color='#ff8ab4'; this.style.background='rgba(255, 138, 180, 0.12)'" onmouseout="this.style.color='#aaa'; this.style.background='none'">
                                     🗑️
                                 </button>
                             </div>
@@ -286,6 +287,8 @@
         // 投稿データを並び替える関数
         function sortPosts(order) {
             if (!currentPosts || currentPosts.length === 0) return;
+
+            currentSortOrder = order;
 
             currentPosts.sort((a, b) => {
                 const dateA = a.posted_at ? new Date(a.posted_at) : new Date(0);
@@ -342,8 +345,8 @@
                     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; flex-wrap: wrap; gap: 8px;">
                         <h4 style="margin: 0; word-break: break-all;">検索結果: ${queryTitle}</h4>
                         <div style="display: flex; gap: 6px;">
-                            <button onclick="sortPosts('newest')" style="background: #222; color: #fff; border: 1px solid #444; padding: 5px 10px; border-radius: 4px; font-size: 11px; cursor: pointer;">新しい順</button>
-                            <button onclick="sortPosts('oldest')" style="background: #444; color: #fff; border: 1px solid #555; padding: 5px 10px; border-radius: 4px; font-size: 11px; cursor: pointer;">古い順</button>
+                            <button onclick="sortPosts('newest')" style="background: ${currentSortOrder === 'newest' ? '#8ab4f8' : '#222'}; color: ${currentSortOrder === 'newest' ? '#131314' : '#fff'}; font-weight: ${currentSortOrder === 'newest' ? 'bold' : 'normal'}; border: 1px solid ${currentSortOrder === 'newest' ? '#8ab4f8' : '#444'}; padding: 5px 10px; border-radius: 4px; font-size: 11px; cursor: pointer; transition: all 0.2s;">新しい順</button>
+                            <button onclick="sortPosts('oldest')" style="background: ${currentSortOrder === 'oldest' ? '#8ab4f8' : '#222'}; color: ${currentSortOrder === 'oldest' ? '#131314' : '#fff'}; font-weight: ${currentSortOrder === 'oldest' ? 'bold' : 'normal'}; border: 1px solid ${currentSortOrder === 'oldest' ? '#8ab4f8' : '#444'}; padding: 5px 10px; border-radius: 4px; font-size: 11px; cursor: pointer; transition: all 0.2s;">古い順</button>
                         </div>
                     </div>
                     ${postsHtml}
