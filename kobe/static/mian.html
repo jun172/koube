@@ -3,16 +3,17 @@
 <head>
     <meta charset="UTF-8">
     <link rel="icon" href="/imag.png" type="image/png">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="icon" href="/static/imag.png" type="image/png">
     <title>神戸市SNS分析ダッシュボード</title>
     <!-- D3.js ライブラリ -->
     <script src="https://d3js.org/d3.v7.min.js"></script>
     <style>
         body { margin: 0; background-color: #131314; color: #e3e3e3; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; overflow: hidden; }
-        .app-container { display: flex; height: 100vh; overflow: hidden; }
+        .app-container { display: flex; height: 100vh; overflow: hidden; position: relative; }
 
         /* サイドバー */
-        .sidebar { width: 260px; background-color: #1e1f20; padding: 24px 20px; border-right: 1px solid #333; box-sizing: border-box; display: flex; flex-direction: column; overflow-y: auto; flex-shrink: 0; }
+        .sidebar { width: 260px; background-color: #1e1f20; padding: 24px 20px; border-right: 1px solid #333; box-sizing: border-box; display: flex; flex-direction: column; overflow-y: auto; flex-shrink: 0; transition: transform 0.3s ease; z-index: 100; }
         .sidebar h3 { font-size: 14px; color: #aaa; margin-top: 20px; margin-bottom: 12px; font-weight: normal; }
         .sidebar ul { padding: 0; margin: 0; }
         .sidebar li { padding: 10px 0; font-size: 14px; cursor: pointer; list-style: none; color: #e3e3e3; }
@@ -26,69 +27,114 @@
         .new-chat-btn:hover { background-color: #aecbfa; }
         .new-chat-btn:active { transform: scale(0.98); }
 
+        /* モバイル用ハンバーガーメニューボタン */
+        .mobile-menu-btn { display: none; position: fixed; top: 12px; left: 12px; z-index: 101; background: #1e1f20; border: 1px solid #444746; color: #e3e3e3; padding: 8px 12px; border-radius: 8px; cursor: pointer; font-size: 16px; align-items: center; justify-content: center; }
+
+        /* サイドバーの背景オーバーレイ（スマホ用） */
+        .sidebar-overlay { display: none; position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(0,0,0,0.5); z-index: 99; }
+
         /* メインコンテンツ */
-        .main-content { flex: 1; display: flex; flex-direction: column; position: relative; overflow: hidden; }
-        #mainDisplayArea { flex: 1; overflow-y: auto; padding: 40px; display: flex; flex-direction: column; align-items: center; justify-content: center; box-sizing: border-box; scroll-behavior: smooth; }
+        .main-content { flex: 1; display: flex; flex-direction: column; position: relative; overflow: hidden; min-width: 0; }
+        #mainDisplayArea { flex: 1; overflow-y: auto; padding: 40px; display: flex; flex-direction: column; align-items: center; justify-content: center; box-sizing: border-box; scroll-behavior: smooth; -webkit-overflow-scrolling: touch; }
         
         /* 初期ウェルカム画面（Gemini風） */
-        .welcome-container { text-align: center; max-width: 600px; width: 100%; display: flex; flex-direction: column; align-items: center; gap: 24px; animation: fadeIn 0.4s ease-out; }
-        .welcome-title { font-size: 32px; font-weight: bold; background: linear-gradient(90deg, #8ab4f8, #c58af9); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin: 0; }
+        .welcome-container { text-align: center; max-width: 600px; width: 100%; display: flex; flex-direction: column; align-items: center; gap: 24px; animation: fadeIn 0.4s ease-out; padding: 0 20px; box-sizing: border-box; }
+        .welcome-title { font-size: 32px; font-weight: bold; background: linear-gradient(90deg, #8ab4f8, #c58af9); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin: 0; word-break: break-all; }
         .welcome-subtitle { font-size: 16px; color: #aaa; margin: 0; }
 
-        /* 検索結果カード */
+        /* 検索結果カード（全体を囲む大きなカード） */
         .analysis-card { background-color: #1e1f20; padding: 30px; border-radius: 16px; border: 1px solid #333; max-width: 800px; width: 100%; margin-bottom: 24px; box-sizing: border-box; box-shadow: 0 4px 20px rgba(0,0,0,0.3); animation: fadeIn 0.3s ease-out; }
         .analysis-card h4 { margin-top: 0; margin-bottom: 24px; font-size: 16px; color: #e3e3e3; font-weight: normal; border-bottom: 1px solid #333; padding-bottom: 12px; }
         
-        /* 投稿アイテムカード */
+        /* 投稿アイテム */
         .post-item { 
-            background: #171819; 
-            padding: 18px 20px; 
-            margin-bottom: 14px; 
-            border-radius: 12px; 
-            border: 1px solid #2d2e30; 
-            transition: border-color 0.2s ease, background 0.2s ease, box-shadow 0.2s ease;
+            padding: 16px 0; 
+            margin-bottom: 16px; 
+            border-bottom: 1px solid rgba(255, 255, 255, 0.08); 
+            transition: opacity 0.2s ease;
         }
-        .post-item:hover {
-            border-color: #8ab4f8;
-            background: #1a1b1d;
-            box-shadow: 0 4px 12px rgba(138, 180, 248, 0.08);
+        .post-item:last-child {
+            border-bottom: none;
         }
         .post-header { display: flex; flex-direction: column; cursor: pointer; }
         
         /* バッジやテキストのスタイル */
-        .post-summary { font-weight: 600; color: #ffffff; font-size: 15px; margin-bottom: 6px; line-height: 1.4; }
-        .post-original { font-size: 13px; color: #9aa0a6; margin-bottom: 8px; line-height: 1.4; background: rgba(255,255,255,0.03); padding: 8px 10px; border-radius: 6px; border-left: 3px solid #8ab4f8; }
-        .post-footer { display: flex; justify-content: space-between; align-items: center; margin-top: 8px; font-size: 12px; color: #8ab4f8; }
+        .post-summary { font-weight: 600; color: #ffffff; font-size: 15px; margin-bottom: 8px; line-height: 1.5; }
+        .post-original { 
+            font-size: 14px; 
+            color: #c4c7c5; 
+            margin-bottom: 8px; 
+            line-height: 1.6; 
+            padding: 4px 0; 
+            word-break: break-all;
+        }
+        .post-footer { display: flex; justify-content: space-between; align-items: center; margin-top: 8px; font-size: 12px; color: #8ab4f8; flex-wrap: wrap; gap: 6px; }
         .like-badge { background: rgba(138, 180, 248, 0.1); padding: 3px 8px; border-radius: 12px; color: #8ab4f8; font-weight: 500; }
         .date-badge { color: #9aa0a6; font-size: 11px; }
 
         /* 下部入力エリア */
         .bottom-input-section { padding: 20px 40px 30px; display: flex; flex-direction: column; align-items: center; gap: 12px; background-color: #131314; width: 100%; box-sizing: border-box; border-top: 1px solid rgba(255,255,255,0.05); }
-        .tag-container { display: flex; gap: 10px; justify-content: center; }
+        .tag-container { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
         .tag { background-color: #1e1f20; padding: 6px 14px; border-radius: 20px; font-size: 13px; cursor: pointer; border: 1px solid #444746; color: #e3e3e3; transition: background 0.2s, border-color 0.2s; }
         .tag:hover { background-color: #333537; border-color: #8ab4f8; }
         
         .search-container { position: relative; width: 100%; max-width: 600px; }
-        .search-input { width: 100%; padding: 16px 24px; padding-right: 60px; border-radius: 30px; border: 1px solid #444746; background: #1e1f20; color: #e3e3e3; outline: none; box-sizing: border-box; font-size: 15px; transition: border-color 0.2s, box-shadow 0.2s; }
+        .search-input { width: 100%; padding: 16px 24px; padding-right: 60px; border-radius: 30px; border: 1px solid #444746; background: #1e1f20; color: #e3e3e3; outline: none; box-sizing: border-box; font-size: 15px; transition: border-color 0.2s, box-shadow 0.2s; -webkit-appearance: none; }
         .search-input:focus { border-color: #8ab4f8; box-shadow: 0 0 0 2px rgba(138, 180, 248, 0.2); }
         .search-icon-button { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); background: #8ab4f8; border: none; border-radius: 50%; width: 40px; height: 40px; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 16px; transition: background 0.2s, transform 0.1s; }
         .search-icon-button:hover { background: #aecbfa; }
         .search-icon-button:active { transform: translateY(-50%) scale(0.95); }
 
         /* ツリーコンテナ＆タブ */
-        .tree-container { margin-top: 15px; padding: 20px; background-color: #131314; border-radius: 12px; border: 1px solid #444746; animation: expandDown 0.3s ease-out; overflow: hidden; }
-        .tree-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
-        .tree-tabs { display: flex; gap: 8px; }
-        .tree-tab-btn { background-color: #1e1f20; color: #aaa; border: 1px solid #444746; padding: 6px 14px; border-radius: 6px; font-size: 12px; cursor: pointer; transition: all 0.2s; }
+        .tree-container { margin-top: 15px; padding: 15px; background-color: #171819; border-radius: 12px; border: 1px solid #444746; animation: expandDown 0.3s ease-out; overflow: hidden; }
+        .tree-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; overflow-x: auto; padding-bottom: 4px; }
+        .tree-tabs { display: flex; gap: 8px; flex-shrink: 0; }
+        .tree-tab-btn { background-color: #1e1f20; color: #aaa; border: 1px solid #444746; padding: 6px 14px; border-radius: 6px; font-size: 12px; cursor: pointer; transition: all 0.2s; white-space: nowrap; }
         .tree-tab-btn:hover { color: #e3e3e3; border-color: #8ab4f8; }
         .tree-tab-btn.active { background-color: #8ab4f8; color: #131314; font-weight: bold; border-color: #8ab4f8; }
-        .tree-canvas { width: 100%; display: flex; justify-content: center; min-height: 160px; }
+        .tree-canvas { width: 100%; display: flex; justify-content: center; min-height: 160px; overflow-x: auto; }
 
         /* 履歴アイテム */
         .history-item { display: flex; justify-content: space-between; align-items: center; padding: 8px 10px; border-radius: 6px; margin-bottom: 4px; transition: background 0.15s; }
         .history-item:hover { background: rgba(255, 255, 255, 0.04); }
         .history-item span { cursor: pointer; color: #ccc; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; margin-right: 8px; font-size: 13px; }
         .history-item span:hover { color: #8ab4f8; }
+
+        /* レスポンシブ対応 (スマホ・タブレット) */
+        @media (max-width: 768px) {
+            .sidebar {
+                position: fixed;
+                top: 0;
+                left: 0;
+                height: 100%;
+                transform: translateX(-100%);
+                box-shadow: 4px 0 15px rgba(0,0,0,0.5);
+            }
+            .sidebar.open {
+                transform: translateX(0);
+            }
+            .sidebar-overlay.open {
+                display: block;
+            }
+            .mobile-menu-btn {
+                display: flex;
+            }
+            .main-content {
+                padding-top: 50px;
+            }
+            #mainDisplayArea {
+                padding: 16px;
+            }
+            .analysis-card {
+                padding: 16px;
+            }
+            .bottom-input-section {
+                padding: 15px 16px 20px;
+            }
+            .welcome-title {
+                font-size: 24px;
+            }
+        }
 
         /* アニメーション */
         @keyframes fadeIn {
@@ -97,18 +143,22 @@
         }
         @keyframes expandDown {
             from { opacity: 0; max-height: 0; padding-top: 0; padding-bottom: 0; }
-            to { opacity: 1; max-height: 300px; padding: 20px; }
+            to { opacity: 1; max-height: 350px; padding: 15px; }
         }
     </style>
 </head>
 <body>
+    <!-- スマホ用メニューボタン -->
+    <button class="mobile-menu-btn" onclick="toggleSidebar()">☰ メニュー</button>
+    <div class="sidebar-overlay" id="sidebarOverlay" onclick="toggleSidebar()"></div>
+
     <div class="app-container">
         <!-- サイドバー -->
-        <aside class="sidebar">
+        <aside class="sidebar" id="sidebar">
             <div id="welcome-user" class="user-welcome">ようこそ、ゲストさん</div>
             
             <button class="new-chat-btn" onclick="startNewChat()">
-                + 新しいチャット
+                + 新しいチャット  
             </button>
 
             <div id="history-list">
@@ -140,7 +190,14 @@
     </div>
 
     <script>
-        const API_BASE_URL = 'http://localhost:8000';
+        // ローカル環境なら localhost:8000、本番環境なら同じドメインを自動で切り替え
+        const API_BASE_URL = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' 
+            ? 'http://localhost:8000' 
+            : '';
+
+        // 現在表示しているデータを保持する変数（並び替え用）
+        let currentPosts = [];
+        let currentQueryTitle = "";
 
         window.onload = async function() {
             const name = localStorage.getItem("userName");
@@ -167,12 +224,19 @@
             }
         };
 
+        function toggleSidebar() {
+            const sidebar = document.getElementById('sidebar');
+            const overlay = document.getElementById('sidebarOverlay');
+            sidebar.classList.toggle('open');
+            overlay.classList.toggle('open');
+        }
+
         function renderHashtags(text) {
             if (!text) return '';
             const matches = text.match(/#[\w\u3000-\u30ff\u4e00-\u9faf]+/g);
             if (!matches || matches.length === 0) return '';
 
-            return '<div class="post-tags" style="margin-top: 8px; display: flex; flex-wrap: wrap; gap: 6px;">' +
+            return '<div class="post-tags" style="margin-top: 6px; display: flex; flex-wrap: wrap; gap: 6px;">' +
                 matches.map(tag => `<span onclick="event.stopPropagation(); addTagToSearch('${tag}')" style="background: rgba(138,180,248,0.1); color: #8ab4f8; padding: 2px 8px; border-radius: 4px; font-size: 11px; cursor: pointer; border: 1px solid rgba(138,180,248,0.2); transition: background 0.2s;">${tag}</span>`).join('') +
                 '</div>';
         }
@@ -214,6 +278,77 @@
             const newUrl = `/app/${historyId}`;
             window.history.pushState({ path: newUrl }, '', newUrl);
             await loadHistoryDetail(historyId);
+            if (window.innerWidth <= 768) {
+                toggleSidebar();
+            }
+        }
+
+        // 投稿データを並び替える関数
+        function sortPosts(order) {
+            if (!currentPosts || currentPosts.length === 0) return;
+
+            currentPosts.sort((a, b) => {
+                const dateA = a.posted_at ? new Date(a.posted_at) : new Date(0);
+                const dateB = b.posted_at ? new Date(b.posted_at) : new Date(0);
+
+                if (order === 'newest') {
+                    return dateB - dateA; // 新しい順
+                } else {
+                    return dateA - dateB; // 古い順
+                }
+            });
+
+            renderPostsContainer(currentQueryTitle, currentPosts);
+        }
+
+        // 検索結果や履歴のHTMLを描画する共通関数
+        function renderPostsContainer(queryTitle, posts) {
+            const displayArea = document.getElementById('mainDisplayArea');
+            displayArea.style.justifyContent = 'flex-start';
+
+            let postsHtml = '';
+            if (posts.length === 0) {
+                postsHtml = `<p style="color:#aaa; font-size:13px; padding: 10px 0;">該当する投稿データが見つかりませんでした。</p>`;
+            } else {
+                posts.forEach((post) => {
+                    const textForTags = post.title || post.post_text || '';
+                    const displaySummary = post.summary ? `<div class="post-summary">📌 ${post.summary}</div>` : '';
+                    const tagsHtml = renderHashtags(textForTags);
+
+                    let dateStr = '';
+                    if (post.posted_at) {
+                        const dateObj = new Date(post.posted_at);
+                        dateStr = `<span class="date-badge">📅 ${dateObj.toLocaleString()}</span>`;
+                    }
+
+                    postsHtml += `
+                        <div class="post-item">
+                            <div class="post-header" onclick="toggleLogicTree(this, '${post.topic_key}')">
+                                ${displaySummary}
+                                <div class="post-original">💬 「${textForTags}」</div>
+                                ${tagsHtml}
+                                <div class="post-footer">
+                                    <span class="like-badge">❤️ ${post.likes || 0} いいね</span>
+                                    ${dateStr}
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                });
+            }
+
+            displayArea.innerHTML = `
+                <div class="analysis-card" style="width: 100%; box-sizing: border-box;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; flex-wrap: wrap; gap: 8px;">
+                        <h4 style="margin: 0; word-break: break-all;">検索結果: ${queryTitle}</h4>
+                        <div style="display: flex; gap: 6px;">
+                            <button onclick="sortPosts('newest')" style="background: #222; color: #fff; border: 1px solid #444; padding: 5px 10px; border-radius: 4px; font-size: 11px; cursor: pointer;">新しい順</button>
+                            <button onclick="sortPosts('oldest')" style="background: #444; color: #fff; border: 1px solid #555; padding: 5px 10px; border-radius: 4px; font-size: 11px; cursor: pointer;">古い順</button>
+                        </div>
+                    </div>
+                    ${postsHtml}
+                </div>
+            `;
         }
 
         async function loadHistoryDetail(historyId) {
@@ -222,50 +357,10 @@
                 if (!response.ok) throw new Error("指定された履歴が見つかりません");
 
                 const data = await response.json();
-                const displayArea = document.getElementById('mainDisplayArea');
-                displayArea.style.justifyContent = 'flex-start';
-                displayArea.innerHTML = ''; 
+                currentQueryTitle = data.query;
+                currentPosts = data.results && data.results.posts ? data.results.posts : [];
 
-                const posts = data.results && data.results.posts ? data.results.posts : [];
-                let postsHtml = '';
-
-                if (posts.length === 0) {
-                    postsHtml = `<p style="color:#aaa; font-size:13px; padding: 10px 0;">該当する投稿データが見つかりませんでした。</p>`;
-                } else {
-                    posts.forEach((post, index) => {
-                        const postId = post.id || `post_${index}`;
-                        const textForTags = post.title || post.post_text || '';
-                        const displaySummary = post.summary ? `<div class="post-summary">📌 ${post.summary}</div>` : '';
-                        const tagsHtml = renderHashtags(textForTags);
-
-                        let dateStr = '';
-                        if (post.posted_at) {
-                            const dateObj = new Date(post.posted_at);
-                            dateStr = `<span class="date-badge">📅 ${dateObj.toLocaleString()}</span>`;
-                        }
-
-                        postsHtml += `
-                            <div class="post-item">
-                                <div class="post-header" onclick="toggleLogicTree(this, '${post.topic_key}')">
-                                    ${displaySummary}
-                                    <div class="post-original">💬 「${textForTags}」</div>
-                                    ${tagsHtml}
-                                    <div class="post-footer">
-                                        <span class="like-badge">❤️ ${post.likes || 0} いいね</span>
-                                        ${dateStr}
-                                    </div>
-                                </div>
-                            </div>
-                        `;
-                    });
-                }
-
-                displayArea.innerHTML = `
-                    <div class="analysis-card">
-                        <h4>検索結果: ${data.query}</h4>
-                        ${postsHtml}
-                    </div>
-                `;
+                renderPostsContainer(currentQueryTitle, currentPosts);
 
             } catch (error) {
                 console.error("履歴詳細の取得エラー:", error);
@@ -283,9 +378,6 @@
             const query = input.value.trim();
             if(!query) return;
 
-            const displayArea = document.getElementById('mainDisplayArea');
-            displayArea.style.justifyContent = 'flex-start';
-
             try {
                 const response = await fetch(`${API_BASE_URL}/api/search?q=${encodeURIComponent(query)}`);
                 const data = await response.json();
@@ -295,47 +387,13 @@
                     window.history.pushState({ path: newUrl }, '', newUrl);
                 }
 
-                const posts = data.results && data.results.posts ? data.results.posts : (data.posts || []);
-                let postsHtml = '';
+                currentQueryTitle = data.query || query;
+                currentPosts = data.results && data.results.posts ? data.results.posts : (data.posts || []);
 
-                if (posts.length === 0) {
-                    postsHtml = `<p style="color:#aaa; font-size:13px; padding: 10px 0;">該当する投稿データが見つかりませんでした。</p>`;
-                } else {
-                    posts.forEach((post, index) => {
-                        const postId = post.id || `post_${index}`;
-                        const textForTags = post.title || post.post_text || '';
-                        const displaySummary = post.summary ? `<div class="post-summary">📌 ${post.summary}</div>` : '';
-                        const tagsHtml = renderHashtags(textForTags);
-
-                        let dateStr = '';
-                        if (post.posted_at) {
-                            const dateObj = new Date(post.posted_at);
-                            dateStr = `<span class="date-badge">📅 ${dateObj.toLocaleString()}</span>`;
-                        }
-
-                        postsHtml += `
-                            <div class="post-item">
-                                <div class="post-header" onclick="toggleLogicTree(this, '${post.topic_key}')">
-                                    ${displaySummary}
-                                    <div class="post-original">💬 「${textForTags}」</div>
-                                    ${tagsHtml}
-                                    <div class="post-footer">
-                                        <span class="like-badge">❤️ ${post.likes || 0} いいね</span>
-                                        ${dateStr}
-                                    </div>
-                                </div>
-                            </div>
-                        `;
-                    });
-                }
-
-                displayArea.innerHTML = `
-                    <div class="analysis-card">
-                        <h4>検索（分析）結果: ${data.query || query}</h4>
-                        ${postsHtml}
-                    </div>
-                `;
+                renderPostsContainer(currentQueryTitle, currentPosts);
+                
                 input.value = '';
+                const displayArea = document.getElementById('mainDisplayArea');
                 displayArea.scrollTo({ top: displayArea.scrollHeight, behavior: 'smooth' });
 
                 await fetchAndRenderHistories();
@@ -363,14 +421,14 @@
 
             svgSelection.remove();
 
-            const width = 600, height = 160;
+            const width = 500, height = 160;
             const svg = d3.select(container)
                 .append("svg")
                 .attr("width", width)
                 .attr("height", height)
                 .style("opacity", 0)
                 .append("g")
-                .attr("transform", "translate(80,10)");
+                .attr("transform", "translate(60,10)");
 
             d3.select(container).select("svg")
                 .transition()
@@ -378,7 +436,7 @@
                 .style("opacity", 1);
 
             const root = d3.hierarchy(rawData);
-            d3.tree().size([height - 30, width - 200])(root);
+            d3.tree().size([height - 30, width - 160])(root);
 
             svg.selectAll(".link")
                 .data(root.links())
@@ -439,7 +497,7 @@
             treeContainer.innerHTML = `
                 <div class="tree-header">
                     <div class="tree-tabs">
-                        <button class="tree-tab-btn active" onclick="switchTreeTab(this, '${topicKey}', 'What')">What (要素分解)</button>
+                        <button class="tree-tab-btn active" onclick="switchTreeTab(this, '${topicKey}', 'What')">要素分解</button>
                         <button class="tree-tab-btn" onclick="switchTreeTab(this, '${topicKey}', 'Why')">ポジティブ</button>
                         <button class="tree-tab-btn" onclick="switchTreeTab(this, '${topicKey}', 'How')">ネガティブ</button>
                     </div>
@@ -466,6 +524,9 @@
             `;
 
             document.getElementById('searchInput').value = '';
+            if (window.innerWidth <= 768) {
+                toggleSidebar();
+            }
         }
 
         async function deleteHistory(event, historyId) {

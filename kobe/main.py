@@ -24,19 +24,12 @@ app = FastAPI(
 # CORS設定（ブラウザからのアクセスエラーを防ぐため特定のオリジンまたは柔軟に設定）
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:8000", "http://127.0.0.1:8000"],
+    allow_origins=["http://localhost:8000", "http://127.0.0.1:8000","http://0.0.0.0/8000"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
-# 投稿データを保存する例
-insert_sns_post({
-    "platform": "X",
-    "original_post_id": "12345678",
-    "post_text": "テスト投稿 #神戸",
-    "likes_count": 5,
-    "posted_at": "2026-09-05T20:00:00+09:00"
-})
+
 # 各種クライアントの初期化
 x_client = XApiClient()
 supabase: Client = get_supabase_client()
@@ -268,9 +261,6 @@ def serve_login():
 def serve_reset():
     return FileResponse("static/reset.html")
 
-@app.get("/login2.html", include_in_schema=False)
-def serve_login2():
-    return FileResponse("static/login2.html")
 
 @app.get("/app", include_in_schema=False)
 def serve_app_dashboard():
