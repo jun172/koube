@@ -7,9 +7,9 @@ from ai import get_ai_engine  # ai.py を直接呼び出す
 
 # X API設定
 X_API_BEARER_TOKEN = os.environ.get("X_API_BEARER_TOKEN")
-SEARCH_ENDPOINT = "https://api.twitter.com/2/tweets/search/recent"
+SEARCH_ENDPOINT = "https://api.x.com/2/tweets/search/recent"
 
-class XApiClient:
+class XPostClient:
     def __init__(self):
         self.headers = {
             "Authorization": f"Bearer {X_API_BEARER_TOKEN}"
@@ -78,14 +78,16 @@ class XApiClient:
         
     def send_to_ai(self, posts: List[Dict]):
         """
-        取得した投稿データをそのまま Ai.py へ引き渡して分析を実行する
+        取得した投稿データをデータベースを介さず、そのまま Ai.py へ引き渡して分析を実行する
         """
         for post in posts:
             try:
-                print(f"-> Ai.pyへデータを送信中 (Original ID: {post['original_post_id']})")
+                print(f"-> AIへデータを直接送信中 (Original ID: {post['original_post_id']})")
                 
-                # ai.py の generate_analysis には text と like_count だけを渡す
+                # ai.py の generate_analysis の定義に合わせてデータを渡す
+                # ※ ai.py側の引数仕様（post_idやtextなど）に合わせて調整してください
                 self.ai_engine.generate_analysis(
+                    post_id=post["original_post_id"], # DBを使わない場合は文字列のID等をそのまま渡すか、ai.py側を調整します
                     text=post["post_text"],
                     like_count=post["likes_count"]
                 )
@@ -106,6 +108,6 @@ class XApiClient:
         print("すべての処理が完了しました。")
 
 if __name__ == "__main__":
-    client = XApiClient()
+    client = XPostClient()
     target_keywords = ["神戸市 不満", "神戸市 改善", "三宮駅 混雑", "垂水区"]
     client.run_collection_task(target_keywords)

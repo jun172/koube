@@ -37,7 +37,7 @@
         .main-content { flex: 1; display: flex; flex-direction: column; position: relative; overflow: hidden; min-width: 0; }
         #mainDisplayArea { flex: 1; overflow-y: auto; padding: 40px; display: flex; flex-direction: column; align-items: center; justify-content: center; box-sizing: border-box; scroll-behavior: smooth; -webkit-overflow-scrolling: touch; }
         
-        /* 初期ウェルカム画面（Gemini風） */
+        /* 初期ウェルカム画面 */
         .welcome-container { text-align: center; max-width: 600px; width: 100%; display: flex; flex-direction: column; align-items: center; gap: 24px; animation: fadeIn 0.4s ease-out; padding: 0 20px; box-sizing: border-box; }
         .welcome-title { font-size: 32px; font-weight: bold; background: linear-gradient(90deg, #8ab4f8, #c58af9); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin: 0; word-break: break-all; }
         .welcome-subtitle { font-size: 16px; color: #aaa; margin: 0; }
@@ -74,15 +74,26 @@
 
         /* 下部入力エリア */
         .bottom-input-section { padding: 20px 40px 30px; display: flex; flex-direction: column; align-items: center; gap: 12px; background-color: #131314; width: 100%; box-sizing: border-box; border-top: 1px solid rgba(255,255,255,0.05); }
-        .tag-container { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
-        .tag { background-color: #1e1f20; padding: 6px 14px; border-radius: 20px; font-size: 13px; cursor: pointer; border: 1px solid #444746; color: #e3e3e3; transition: background 0.2s, border-color 0.2s; }
-        .tag:hover { background-color: #333537; border-color: #8ab4f8; }
         
+        /* タグコンテナ（追加・削除ボタン付き） */
+        .tag-container { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; align-items: center; max-width: 600px; width: 100%; }
+        .tag { background-color: #1e1f20; padding: 6px 12px; border-radius: 20px; font-size: 13px; cursor: pointer; border: 1px solid #444746; color: #e3e3e3; display: inline-flex; align-items: center; gap: 6px; transition: background 0.2s, border-color 0.2s; }
+        .tag:hover { background-color: #333537; border-color: #8ab4f8; }
+        .tag-delete { background: none; border: none; color: #aaa; cursor: pointer; font-size: 14px; padding: 0; line-height: 1; border-radius: 50%; width: 16px; height: 16px; display: inline-flex; align-items: center; justify-content: center; transition: color 0.2s, background 0.2s; }
+        .tag-delete:hover { color: #ff8ab4; background: rgba(255,138,180,0.15); }
+        
+        /* タグ追加用ボタン・フォーム */
+        .add-tag-btn { background: #1e1f20; border: 1px dashed #555; color: #aaa; padding: 6px 12px; border-radius: 20px; font-size: 13px; cursor: pointer; transition: all 0.2s; }
+        .add-tag-btn:hover { border-color: #8ab4f8; color: #8ab4f8; background: rgba(138,180,248,0.05); }
+        .tag-input-form { display: inline-flex; align-items: center; gap: 4px; background: #1e1f20; border: 1px solid #8ab4f8; padding: 2px 8px; border-radius: 20px; }
+        .tag-input-form input { background: none; border: none; color: #fff; font-size: 13px; outline: none; width: 90px; }
+        .tag-input-form button { background: #8ab4f8; color: #131314; border: none; border-radius: 10px; padding: 2px 8px; font-size: 11px; font-weight: bold; cursor: pointer; }
+
         .search-container { position: relative; width: 100%; max-width: 600px; }
         .search-input { width: 100%; padding: 16px 24px; padding-right: 60px; border-radius: 30px; border: 1px solid #444746; background: #1e1f20; color: #e3e3e3; outline: none; box-sizing: border-box; font-size: 15px; transition: border-color 0.2s, box-shadow 0.2s; -webkit-appearance: none; }
         .search-input:focus { border-color: #8ab4f8; box-shadow: 0 0 0 2px rgba(138, 180, 248, 0.2); }
-        .search-icon-button { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); background: #8ab4f8; border: none; border-radius: 50%; width: 40px; height: 40px; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 16px; transition: background 0.2s, transform 0.1s; }
-        .search-icon-button:hover { background: #aecbfa; }
+        .search-icon-button { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); background: rgba(118, 118, 118, 0.5); border: none; border-radius: 50%; width: 40px; height: 40px; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 16px; transition: background 0.2s, transform 0.1s; backdrop-filter: blur(4px); }
+        .search-icon-button:hover { background: #9b9b9b; }
         .search-icon-button:active { transform: translateY(-50%) scale(0.95); }
 
         /* ツリーコンテナ＆タブ */
@@ -155,10 +166,10 @@
     <div class="app-container">
         <!-- サイドバー -->
         <aside class="sidebar" id="sidebar">
-            <div id="welcome-user" class="user-welcome">ようこそ、ゲストさん</div>
+            <div id="welcome-user" class="user-welcome">Unmute City</div>
             
             <button class="new-chat-btn" onclick="startNewChat()">
-                + 新しいチャット  
+                キーワード分析に戻る  
             </button>
 
             <div id="history-list">
@@ -177,13 +188,18 @@
 
             <!-- 下部入力エリア -->
             <div class="bottom-input-section">
-                <div class="tag-container">
-                    <span class="tag" onclick="addTagToSearch('#神戸市')">#神戸市</span>
-                    <span class="tag" onclick="addTagToSearch('#不満')">#不満</span>
+                <!-- 動的にキーワードを表示・追加・削除するコンテナ -->
+                <div class="tag-container" id="tagContainer">
+                    <!-- JavaScriptで初期キーワードと追加フォームがここに描画されます -->
                 </div>
                 <div class="search-container">
                     <input type="text" id="searchInput" placeholder="分析キーワードを入力..." class="search-input" onkeydown="if(event.key === 'Enter') executeSearch()">
-                    <button class="search-icon-button" onclick="executeSearch()">🔍</button>
+                    <button class="search-icon-button" onclick="executeSearch()">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                            <circle cx="11" cy="11" r="7" stroke="#dcdcdc" stroke-width="2.2"/>
+                            <line x1="16.2" y1="16.2" x2="21" y2="21" stroke="#dcdcdc" stroke-width="2.2" stroke-linecap="round"/>
+                        </svg>
+                    </button>
                 </div>
             </div>
         </main>
@@ -198,6 +214,10 @@
         // 現在表示しているデータを保持する変数（並び替え用）
         let currentPosts = [];
         let currentQueryTitle = "";
+        let currentSortOrder = 'newest'; // 並び順
+
+        // キーワードの管理用（初期値を # なしに変更）
+        let customTags = JSON.parse(localStorage.getItem("customTags")) || ['神戸市', '不満'];
 
         window.onload = async function() {
             const name = localStorage.getItem("userName");
@@ -205,6 +225,7 @@
                 document.getElementById("welcome-user").textContent = `ようこそ、${name} さん`;
             }
 
+            renderTags();
             await fetchAndRenderHistories();
 
             const pathParts = window.location.pathname.split('/').filter(Boolean);
@@ -229,6 +250,72 @@
             const overlay = document.getElementById('sidebarOverlay');
             sidebar.classList.toggle('open');
             overlay.classList.toggle('open');
+        }
+
+        // キーワードの描画関数
+        function renderTags() {
+            const container = document.getElementById('tagContainer');
+            let html = '';
+
+            customTags.forEach((tag, index) => {
+                html += `
+                    <span class="tag">
+                        <span onclick="addTagToSearch('${tag}')">${tag}</span>
+                        <button class="tag-delete" onclick="event.stopPropagation(); removeTag(${index})" title="削除">×</button>
+                    </span>
+                `;
+            });
+
+            // 追加ボタン
+            html += `<button class="add-tag-btn" onclick="showAddTagInput()">+ 追加</button>`;
+            container.innerHTML = html;
+        }
+
+        // キーワード追加用インプットを表示する
+        function showAddTagInput() {
+            const container = document.getElementById('tagContainer');
+            let html = '';
+            customTags.forEach((tag, index) => {
+                html += `
+                    <span class="tag">
+                        <span onclick="addTagToSearch('${tag}')">${tag}</span>
+                        <button class="tag-delete" onclick="event.stopPropagation(); removeTag(${index})" title="削除">×</button>
+                    </span>
+                `;
+            });
+
+            html += `
+                <span class="tag-input-form">
+                    <input type="text" id="newTagInput" placeholder="キーワード" onkeydown="if(event.key === 'Enter') confirmAddTag()">
+                    <button onclick="confirmAddTag()">追加</button>
+                </span>
+            `;
+            container.innerHTML = html;
+            document.getElementById('newTagInput').focus();
+        }
+
+        // キーワードの追加を確定（#を自動付与しないように修正）
+        function confirmAddTag() {
+            const input = document.getElementById('newTagInput');
+            if (!input) return;
+            let val = input.value.trim();
+            if (!val) {
+                renderTags();
+                return;
+            }
+
+            if (!customTags.includes(val)) {
+                customTags.push(val);
+                localStorage.setItem("customTags", JSON.stringify(customTags));
+            }
+            renderTags();
+        }
+
+        // キーワードを削除する
+        function removeTag(index) {
+            customTags.splice(index, 1);
+            localStorage.setItem("customTags", JSON.stringify(customTags));
+            renderTags();
         }
 
         function renderHashtags(text) {
@@ -260,8 +347,14 @@
                                 <span onclick="selectHistory('${item.id}')">
                                     ${item.query}
                                 </span>
-                                <button onclick="deleteHistory(event, '${item.id}')" style="background: none; border: none; cursor: pointer; color: #aaa; font-size: 14px; padding: 2px 6px;" title="削除" onmouseover="this.style.color='#ff8ab4'" onmouseout="this.style.color='#aaa'">
-                                    🗑️
+                                <button onclick="deleteHistory(event, '${item.id}')" style="background: none; border: none; border-radius: 6px; cursor: pointer; color: #aaa; padding: 4px 6px; display: flex; align-items: center; transition: background 0.2s, color 0.2s;" title="削除" onmouseover="this.style.color='#ff8ab4'; this.style.background='rgba(255, 138, 180, 0.12)'" onmouseout="this.style.color='#aaa'; this.style.background='none'">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                        <path d="M4 7H20" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                                        <path d="M6 7L7 20C7 20.5523 7.44772 21 8 21H16C16.5523 21 17 20.5523 17 20L18 7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                                        <path d="M9 7V4C9 3.44772 9.44772 3 10 3H14C14.5523 3 15 3.44772 15 4V7" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                                        <path d="M10 11V17" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                                        <path d="M14 11V17" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                                    </svg>
                                 </button>
                             </div>
                         `;
@@ -287,9 +380,11 @@
         function sortPosts(order) {
             if (!currentPosts || currentPosts.length === 0) return;
 
+            currentSortOrder = order;
+
             currentPosts.sort((a, b) => {
-                const dateA = a.posted_at ? new Date(a.posted_at) : new Date(0);
-                const dateB = b.posted_at ? new Date(b.posted_at) : new Date(0);
+                const dateA = a.collected_at ? new Date(a.collected_at) : new Date(0);
+                const dateB = b.collected_at ? new Date(b.collected_at) : new Date(0);
 
                 if (order === 'newest') {
                     return dateB - dateA; // 新しい順
@@ -316,8 +411,8 @@
                     const tagsHtml = renderHashtags(textForTags);
 
                     let dateStr = '';
-                    if (post.posted_at) {
-                        const dateObj = new Date(post.posted_at);
+                    if (post.collected_at) {
+                        const dateObj = new Date(post.collected_at);
                         dateStr = `<span class="date-badge">📅 ${dateObj.toLocaleString()}</span>`;
                     }
 
@@ -337,13 +432,28 @@
                 });
             }
 
+            // 投稿データから最古と最新の時間算出
+            let timeRangeStr = '';
+            if (posts && posts.length > 0) {
+                const validDates = posts.map(p => p.collected_at ? new Date(p.collected_at).getTime() : null).filter(Boolean);
+                if (validDates.length > 0) {
+                    const minDate = new Date(Math.min(...validDates));
+                    const maxDate = new Date(Math.max(...validDates));
+                    timeRangeStr = `${minDate.toLocaleDateString()} 〜 ${maxDate.toLocaleDateString()}`;
+                }
+            }
+
             displayArea.innerHTML = `
                 <div class="analysis-card" style="width: 100%; box-sizing: border-box;">
                     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; flex-wrap: wrap; gap: 8px;">
                         <h4 style="margin: 0; word-break: break-all;">検索結果: ${queryTitle}</h4>
-                        <div style="display: flex; gap: 6px;">
-                            <button onclick="sortPosts('newest')" style="background: #222; color: #fff; border: 1px solid #444; padding: 5px 10px; border-radius: 4px; font-size: 11px; cursor: pointer;">新しい順</button>
-                            <button onclick="sortPosts('oldest')" style="background: #444; color: #fff; border: 1px solid #555; padding: 5px 10px; border-radius: 4px; font-size: 11px; cursor: pointer;">古い順</button>
+                        <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
+                            ${timeRangeStr ? `<span style="font-size: 12px; color: #9aa0a6;">🕒 ${timeRangeStr}</span>` : ''}
+                            
+                            <div style="display: flex; gap: 6px;">
+                                <button onclick="sortPosts('newest')" style="background: ${currentSortOrder === 'newest' ? '#8ab4f8' : '#222'}; color: ${currentSortOrder === 'newest' ? '#131314' : '#fff'}; font-weight: ${currentSortOrder === 'newest' ? 'bold' : 'normal'}; border: 1px solid ${currentSortOrder === 'newest' ? '#8ab4f8' : '#444'}; padding: 5px 10px; border-radius: 4px; font-size: 11px; cursor: pointer; transition: all 0.2s;">新しい順</button>
+                                <button onclick="sortPosts('oldest')" style="background: ${currentSortOrder === 'oldest' ? '#8ab4f8' : '#222'}; color: ${currentSortOrder === 'oldest' ? '#131314' : '#fff'}; font-weight: ${currentSortOrder === 'oldest' ? 'bold' : 'normal'}; border: 1px solid ${currentSortOrder === 'oldest' ? '#8ab4f8' : '#444'}; padding: 5px 10px; border-radius: 4px; font-size: 11px; cursor: pointer; transition: all 0.2s;">古い順</button>
+                            </div>
                         </div>
                     </div>
                     ${postsHtml}

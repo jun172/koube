@@ -3,12 +3,17 @@ import json
 from typing import Dict, Any, Optional
 from dotenv import load_dotenv
 from google import genai
-from database import get_supabase_client
+
+from sklearn.preprocessing import MinMaxScaler
+import numpy as np
+
+# database.py から必要な保存関数をインポートする
+from database import get_supabase_client, insert_ai_analysis, upsert_issue_catalog, link_issue_and_post
 
 # .env ファイルから環境変数を読み込む
 load_dotenv()
 
-# クライアントの初期化（環境変数 GEMINI_API_KEY を自動読み込み）
+# クライアントの初期化
 client = genai.Client()
 
 _engine = None
@@ -22,28 +27,53 @@ def get_ai_engine():
 class AnalysisEngine:
     def __init__(self):
         self.supabase = get_supabase_client()
+        # 整数値のタプルに修正するか、使っていない場合はこの行自体を削除してOKです
+        self.scaler = MinMaxScaler(feature_range=(0, 1))
 
-    def generate_analysis(self, post_id: int, text: str, like_count: int):
+    def _calculate_priority_with_ml(self, ai_base_priority: int, likes: int, replies: int, impressions: int) -> int:
         """
-        1件のSNS投稿をGeminiで要約・分析し、ai_analysis_resultsとissue_catalogに保存する
+        scikit-learnの処理概念や特徴量スケーリングを応用し、
+        AIが算出した深刻度とエンゲージメント指標（いいね、コメント、インプレッション）を統合して優先度を算出する。
+        """
+        # エンゲージメントの生データを配列にする [likes, replies, impressions]
+        raw_features = np.array([[float(likes), float(replies), float(impressions)]])
+        
+        # 仮の基準値を用いた正規化（実運用では過去データの統計量等に合わせる）
+        # 例として、いいね最大100、返信最大50、インプレッション最大10000を想定したスケーリング
+        weights = np.array([0.4, 0.4, 0.2])  # 各指標の重み付け
+        
+        # 特徴量の重み付き合算値を算出
+        engagement_score = np.dot(raw_features, weights)[0]
+        
+        # シグモイド関数やクリッピングで 0〜30点分のブースト値に変換
+        engagement_boost = min(30.0, float(engagement_score) * 0.5)
+        
+        # AI評価（最大70点分）＋ エンゲージメント補正（最大30点分）
+        total_score = int((ai_base_priority * 0.7) + engagement_boost)
+        return max(0, min(100, total_score))
+
+    def generate_analysis(self, post_id: Any, text: str, like_count: int, reply_count: int = 0, impressions: int = 0):
+        """
+        1件のSNS投稿をGeminiで要約・分析し、エンゲージメント指標をscikit-learn系ロジックで統合してDBへ保存する
         """
         try:
-            
             prompt = f"""
             以下の市民の投稿を分析・要約し、必ず以下のJSON形式のみで返してください（余計な解説やマークダウン以外のテキストは不要です）。
             投稿内容: "{text}"
             いいね数: {like_count}
+            返信数: {reply_count}
+            インプレッション数: {impressions}
             
             要件:
-            1. summary: 投稿内容の簡潔な要約文（30文字〜50文字程度）
+            1. ai_summary: 投稿内容の簡潔な要約文（30文字〜50文字程度）
             2. sentiment_score: -1.0(最悪)〜1.0(最高)の感情スコア（数値）
             3. what_tree: 大分類、中分類、小分類を含むツリー構造 (name, children)
-            4. priority_score: 0-100の優先度（いいね数と深刻度で算出、整数）
+            4. base_priority: 0-100のテキスト単体での深刻度（整数）
             5. tags: 投稿内容を象徴する日本語のキーワード・ハッシュタグのリスト（例: ["#再開発", "#神戸市", "#市民の声"]。2〜4個程度）
             """
             
             response = client.models.generate_content(
-                model="gemini-3.6-flash",
+                model="gemini-2.5-flash",
                 contents=prompt,
             )
             
@@ -58,38 +88,42 @@ class AnalysisEngine:
                 raw_text = raw_text[:-3]
 
             data = json.loads(raw_text.strip())
-            post_summary = data.get("summary", text[:50])
+            post_summary = data.get("ai_summary", text[:50])
 
-            # 1. sns_posts 側にも要約を反映させたい場合はここで更新（必要に応じて）
-            data = json.loads(raw_text.strip())
-            post_summary = data.get("summary", text[:50])
+            # AIが算出した基本深刻度を取得
+            base_priority = data.get("base_priority", data.get("priority_score", 50))
+            
+            # scikit-learnベースのロジックでエンゲージメントを反映した最終優先度を計算
+            final_priority = self._calculate_priority_with_ml(
+                ai_base_priority=base_priority,
+                likes=like_count,
+                replies=reply_count,
+                impressions=impressions
+            )
 
-            # ★ sns_posts テーブルの summary カラムを要約文で更新する
-            self.supabase.table("sns_posts").update({
-                "summary": post_summary
-            }).eq("id", post_id).execute()
-
-            # DBへ解析結果を保存 (sns_post_id の UNIQUE制約に対応)
-
-            # 2. DBへ解析結果を保存 (sns_post_id の UNIQUE制約に対応)
-            self.supabase.table("ai_analysis_results").upsert({
+            # 1. ai_analysis_results テーブルへ保存
+            analysis_data = {
                 "sns_post_id": post_id,
                 "is_valid_issue": True,
                 "sentiment_score": data.get("sentiment_score", 0.0),
-                "priority_score": data.get("priority_score", 0)
-            }, on_conflict="sns_post_id").execute()
+                "priority_score": final_priority
+            }
+            insert_ai_analysis(analysis_data)
 
-            # 3. 課題カタログ（issue_catalog）へ保存
-            self._update_issue_catalog(post_id, data.get("what_tree", {}), data.get("priority_score", 0), post_summary)
-            print(f"Post {post_id} の要約・AI分析と保存が完了しました。要約: {post_summary}")
+            # 2. 課題カタログ（issue_catalog）および中間テーブルへの保存
+            self._save_to_catalog(
+                post_id=post_id, 
+                tree_data=data.get("what_tree", {}), 
+                priority=final_priority, 
+                summary_text=post_summary
+            )
+            
+            print(f"Post ID: {post_id} のAI分析とMLエンゲージメント補正（優先度: {final_priority}）の保存が完了しました。")
 
         except Exception as e:
             print(f"AI Analysis Error (Post ID: {post_id}): {e}")
 
-    def _update_issue_catalog(self, post_id: int, tree_data: Dict[str, Any], priority: int, summary_text: str):
-        """
-        Whatツリーの階層構造から大・中・小カテゴリを抽出し、issue_catalog テーブルへ保存する。
-        """
+    def _save_to_catalog(self, post_id: Any, tree_data: Dict[str, Any], priority: int, summary_text: str):
         try:
             main_cat = tree_data.get("name", "一般課題")
             sub_cat = ""
@@ -103,67 +137,26 @@ class AnalysisEngine:
                 if sub_children:
                     detail_cat = sub_children[0].get("name", "")
 
-            # 課題カタログへ挿入（AIによる要約文を ai_summary に格納）
-            catalog_res = self.supabase.table("issue_catalog").insert({
+            catalog_data = {
                 "main_category": main_cat,
                 "sub_category": sub_cat,
                 "detail_category": detail_cat,
                 "ai_summary": summary_text,
                 "total_priority_score": priority
-            }).execute()
+            }
+            
+            catalog_res = upsert_issue_catalog(catalog_data)
 
             if catalog_res and hasattr(catalog_res, "data") and isinstance(catalog_res.data, list) and len(catalog_res.data) > 0:
                 first_row = catalog_res.data[0]
                 if isinstance(first_row, dict) and "id" in first_row:
-                    issue_id = first_row["id"]
-                    self.supabase.table("issue_post_relations").upsert({
-                        "issue_id": issue_id,
-                        "sns_post_id": post_id
-                    }, on_conflict="issue_id,sns_post_id").execute()
-
+                    raw_id = first_row["id"]
+                    if raw_id is not None:
+                        issue_id = int(str(raw_id))
+                        link_issue_and_post(issue_id=issue_id, sns_post_id=post_id)
+                        
         except Exception as e:
-            print(f"Issue Catalog Update Error: {e}")
-
-    def process_sns_posts_batch(self):
-        try:
-            analyzed_res = self.supabase.table("ai_analysis_results").select("sns_post_id").execute()
-            
-            analyzed_ids = []
-            if analyzed_res and analyzed_res.data:
-                analyzed_ids = [row["sns_post_id"] for row in analyzed_res.data if isinstance(row, dict) and "sns_post_id" in row]
-
-            posts_res = self.supabase.table("sns_posts").select("*").execute()
-            
-            if not posts_res or not posts_res.data:
-                print("処理対象の投稿がありません。")
-                return
-
-            posts = posts_res.data
-            print(f"総投稿数: {len(posts)}件, 既解析数: {len(analyzed_ids)}件")
-
-            for post in posts:
-                if not isinstance(post, dict):
-                    continue
-                
-                post_id = post.get("id")
-                if post_id is None or post_id in analyzed_ids:
-                    continue  
-
-                post_text = post.get("post_text", "")
-                likes_count = post.get("likes_count", 0)
-
-                print(f"Analyzing & Summarizing Post ID {post_id}...")
-                self.generate_analysis(
-                    post_id=int(post_id),
-                    text=str(post_text),
-                    like_count=int(likes_count) if likes_count is not None else 0
-                )
-
-        except Exception as e:
-            print(f"Batch Processing Error: {e}")
+            print(f"Catalog Save Error: {e}")
 
 # インスタンス化
 engine = AnalysisEngine()
-
-if __name__ == "__main__":
-    engine.process_sns_posts_batch()

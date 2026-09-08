@@ -5,15 +5,15 @@ from pydantic import BaseModel
 from typing import List, Optional
 from supabase import Client
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse,HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from datetime import datetime, timezone
 import uuid
 
-
 # 自作モジュール
-from x import XApiClient
 from ai import get_ai_engine
-from database import get_supabase_client,insert_sns_post, upsert_chat_history
+from database import get_supabase_client, insert_sns_post, upsert_chat_history
+from x import XPostClient
+
 
 app = FastAPI(
     title="Unmute City Backend",
@@ -24,15 +24,15 @@ app = FastAPI(
 # CORS設定（ブラウザからのアクセスエラーを防ぐため特定のオリジンまたは柔軟に設定）
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:8000", "http://127.0.0.1:8000","http://0.0.0.0/8000"],
+    allow_origins=["http://localhost:8000", "http://127.0.0.1:8000", "http://0.0.0.0/8000"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 # 各種クライアントの初期化
-x_client = XApiClient()
 supabase: Client = get_supabase_client()
+x_client = XPostClient()  # <-- ここで XApiClient をインスタンス化して定義
 
 
 # --- Pydanticスキーマ定義 ---
@@ -51,10 +51,12 @@ class IssueCatalogCreate(BaseModel):
 class UserSchema(BaseModel):
     email: str
     password: str
+
 class SignupSchema(BaseModel):
     email: str
     password: str
     name: str
+
 class PostCreate(BaseModel):
     post_text: str
     platform: str = "WebDashboard"
@@ -131,11 +133,10 @@ def reset_password(data: PasswordResetSchema):
 @app.post("/api/forgot-password")
 def forgot_password(data: PasswordResetRequestSchema):
     try:
-        # Supabaseの機能で指定メールアドレスへパスワード再設定メールを自動送信
         response = supabase.auth.reset_password_for_email(
             data.email,
             options={
-                "redirect_to": "http://localhost:8000/reset2.html" # 再設定後に誘導するページ
+                "redirect_to": "http://localhost:8000/reset2.html"
             }
         )
         return {"message": "パスワード再設定メールを送信しました", "data": response}
@@ -156,19 +157,16 @@ async def trigger_collection(request: CollectionRequest, background_tasks: Backg
             if not posts:
                 continue
             
-            # 各ポストをDBに保存し、発行された整数型の id を取得してAI解析に渡す
             for post in posts:
                 try:
                     saved_res = supabase.table("sns_posts").upsert(
                         post, 
                         on_conflict="original_post_id"
-                    ).execute()
+                    ).select().execute() # .select() を付加して戻り値（id）を確実に取得
 
-                    # data がリストであり、かつ最初の要素が辞書型であることを安全に判定・キャストする
                     if saved_res and hasattr(saved_res, "data") and isinstance(saved_res.data, list) and len(saved_res.data) > 0:
                         first_row = saved_res.data[0]
                         if isinstance(first_row, dict):
-                            # 明示的に int 型にキャストして Pylance の警告を回避
                             raw_id = first_row.get("id", 0)
                             post_db_id = int(str(raw_id)) if raw_id is not None else 0
                             if post_db_id:
@@ -210,7 +208,7 @@ def get_analysis_result(post_id: int):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# 4. Gemini風の履歴一覧・詳細取得API
+# 4. 履歴一覧・詳細取得API
 @app.get("/api/histories")
 def get_chat_histories():
     try:
@@ -229,7 +227,7 @@ def get_chat_history_detail(history_id: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-#5.削除
+# 5. 削除
 @app.delete("/api/history/{history_id}")
 def delete_chat_history(history_id: str):
     try:
@@ -242,7 +240,6 @@ def delete_chat_history(history_id: str):
 @app.get("/api/ai-analyses")
 def get_ai_analyses_with_posts():
     try:
-        # ai_analysis_results を取得しつつ、外部キー経由で sns_posts の情報も結合して取得する
         response = supabase.table("ai_analysis_results").select(
             "id, is_valid_issue, sentiment_score, priority_score, analyzed_at, sns_posts(id, platform, post_text, likes_count, collected_at)"
         ).order("analyzed_at", desc=True).execute()
@@ -261,7 +258,6 @@ def serve_login():
 def serve_reset():
     return FileResponse("static/reset.html")
 
-
 @app.get("/app", include_in_schema=False)
 def serve_app_dashboard():
     return FileResponse("static/mian.html")
@@ -275,13 +271,13 @@ def serve_reset2():
     return FileResponse("static/reset2.html")
 
 # --- 検索・D3.jsツリー用 API ---
+# --- 検索・D3.jsツリー用 API ---
 @app.get("/api/search")
 def search_issues(q: str = Query(..., description="検索キーワード")):
     try:
-        # ai_analysis_results と sns_posts を結合し、AI分析済みで有効な投稿のみを対象にする
-        # または issue_catalog からキーワード検索を行う形に切り替える
+        # sns_posts!inner(...) の中に collected_at を追加
         response = supabase.table("ai_analysis_results").select(
-            "id, sentiment_score, priority_score, sns_posts!inner(id, platform, post_text, likes_count)"
+            "id, sentiment_score, priority_score, sns_posts!inner(id, platform, post_text, likes_count, collected_at)"
         ).eq("is_valid_issue", True).execute()
         
         posts = []
@@ -289,18 +285,16 @@ def search_issues(q: str = Query(..., description="検索キーワード")):
             for item in response.data:
                 if isinstance(item, dict):
                     post_info = item.get("sns_posts")
-                    # post_info が辞書型の場合のみ処理を進める
                     if isinstance(post_info, dict):
                         text = str(post_info.get("post_text") or "")
-                        # キーワードが本文に含まれているかフィルター
                         if q.lower() in text.lower():
                             posts.append({
                                 "title": text,
                                 "likes": post_info.get("likes_count", 0),
-                                "topic_key": post_info.get("platform", "X")
+                                "topic_key": post_info.get("platform", "X"),
+                                "collected_at": post_info.get("collected_at")  # ← ここを追加！
                             })
 
-        # 検索履歴の保存
         history_id = str(uuid.uuid4())[:16]
         try:
             supabase.table("chat_histories").insert({
@@ -314,7 +308,7 @@ def search_issues(q: str = Query(..., description="検索キーワード")):
         return {"query": q, "history_id": history_id, "posts": posts}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-    
+
 @app.get("/api/tree/{topic_key}/{tree_type}")
 def get_d3_tree_data(topic_key: str, tree_type: str):
     try:
@@ -355,11 +349,30 @@ def create_post(post: PostCreate):
 @app.get("/api/posts")
 def get_posts():
     try:
-        # スキーマ上の実際のタイムスタンプ列に合わせて collected_at で降順ソート
         response = supabase.table("ai_analysis_results").select("*").order("sns_post_id", desc=True).execute()
         return {"posts": response.data}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+#APIで投稿時間取得
+@app.get("/api/post-time/{original_post_id}")
+def get_specific_post_time(original_post_id: str):
+    try:
+        # データベース側のカラム名も 'collected_at' に変更する場合
+        response = supabase.table("post_timestamps").select("collected_at").eq("original_post_id", original_post_id).execute()
+        
+        if not response.data or len(response.data) == 0:
+            return {"collected_at": None}
+            
+        post_data = response.data[0]
+        if isinstance(post_data, dict):
+            # 返却するキー名も 'collected_at' に合わせる
+            return {"collected_at": post_data.get("collected_at")}
+            
+        return {"collected_at": None}
+    except Exception as e:
+        print(f"ERROR in get_specific_post_time: {e}")
+        return {"collected_at": None}
 
 if __name__ == "__main__":
     import uvicorn
