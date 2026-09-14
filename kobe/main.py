@@ -270,30 +270,28 @@ def serve_app_history_dashboard(history_id: str):
 def serve_reset2():
     return FileResponse("static/reset2.html")
 
-# --- 検索・D3.jsツリー用 API ---
+
 # --- 検索・D3.jsツリー用 API ---
 @app.get("/api/search")
 def search_issues(q: str = Query(..., description="検索キーワード")):
     try:
-        # sns_posts!inner(...) の中に collected_at を追加
-        response = supabase.table("ai_analysis_results").select(
-            "id, sentiment_score, priority_score, sns_posts!inner(id, platform, post_text, likes_count, collected_at)"
-        ).eq("is_valid_issue", True).execute()
+        # sns_posts テーブルを起点にして直接キーワード検索を行う
+        response = supabase.table("sns_posts").select(
+            "id, platform, post_text, likes_count, collected_at"
+        ).ilike("post_text", f"%{q}%").execute()
         
         posts = []
         if response.data:
-            for item in response.data:
-                if isinstance(item, dict):
-                    post_info = item.get("sns_posts")
-                    if isinstance(post_info, dict):
-                        text = str(post_info.get("post_text") or "")
-                        if q.lower() in text.lower():
-                            posts.append({
-                                "title": text,
-                                "likes": post_info.get("likes_count", 0),
-                                "topic_key": post_info.get("platform", "X"),
-                                "collected_at": post_info.get("collected_at")  # ← ここを追加！
-                            })
+            for post_info in response.data:
+                if isinstance(post_info, dict):
+                    text = str(post_info.get("post_text") or "")
+                    posts.append({
+                        "title": text,
+                        "likes": post_info.get("likes_count", 0),
+                        "topic_key": post_info.get("platform", "X"),
+                        "collected_at": post_info.get("collected_at"),
+                        "sentiment_score": 0 # 必要に応じてai_analysis_resultsから取得するよう結合に変更可能
+                    })
 
         history_id = str(uuid.uuid4())[:16]
         try:
@@ -308,7 +306,8 @@ def search_issues(q: str = Query(..., description="検索キーワード")):
         return {"query": q, "history_id": history_id, "posts": posts}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
+    
+#ロジックツリー
 @app.get("/api/tree/{topic_key}/{tree_type}")
 def get_d3_tree_data(topic_key: str, tree_type: str):
     try:
@@ -337,10 +336,11 @@ def get_d3_tree_data(topic_key: str, tree_type: str):
 @app.post("/api/posts")
 def create_post(post: PostCreate):
     try:
-        response = supabase.table("ai_analysis_results").insert({
+        # ai_analysis_results ではなく sns_posts テーブルへインサートする
+        response = supabase.table("sns_posts").insert({
             "platform": post.platform,
             "post_text": post.post_text,
-            "collected_at": datetime.now(timezone.utc).isoformat()
+            "original_post_id": f"web_{uuid.uuid4()}" # 重複回避用のダミーIDなどを付与
         }).execute()
         return {"message": "投稿が保存されました", "data": response.data}
     except Exception as e:
@@ -349,7 +349,8 @@ def create_post(post: PostCreate):
 @app.get("/api/posts")
 def get_posts():
     try:
-        response = supabase.table("ai_analysis_results").select("*").order("sns_post_id", desc=True).execute()
+        # sns_posts テーブルから全件取得する
+        response = supabase.table("sns_posts").select("*").order("id", desc=True).execute()
         return {"posts": response.data}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

@@ -214,37 +214,48 @@
         // 現在表示しているデータを保持する変数（並び替え用）
         let currentPosts = [];
         let currentQueryTitle = "";
+
         let currentSortOrder = 'newest'; // 並び順
 
         // キーワードの管理用（初期値を # なしに変更）
         let customTags = JSON.parse(localStorage.getItem("customTags")) || ['神戸市', '不満'];
 
+
         window.onload = async function() {
-            const name = localStorage.getItem("userName");
-            if (name) {
-                document.getElementById("welcome-user").textContent = `ようこそ、${name} さん`;
-            }
+        const name = localStorage.getItem("userName");
+    
+        // ログイン情報（名前）がない場合だけログイン画面などに飛ばす
+        if (!name) {
+            window.location.href = '/static/login.html'; // ログイン画面のパス
+            return;
+        }
 
-            renderTags();
-            await fetchAndRenderHistories();
+        // ここに到達した時点で名前はあるので、画面に表示する
+        const welcomeUser = document.getElementById("welcome-user");
+        if (welcomeUser) {
+            welcomeUser.textContent = `ようこそ、${name} さん`;
+        }
 
-            const pathParts = window.location.pathname.split('/').filter(Boolean);
-            let targetHistoryId = null;
-            const appIndex = pathParts.indexOf('app');
-            if (appIndex !== -1 && pathParts.length > appIndex + 1) {
-                targetHistoryId = pathParts[appIndex + 1];
-            }
+        renderTags();
+        await fetchAndRenderHistories();
 
-            if (!targetHistoryId) {
-                const urlParams = new URLSearchParams(window.location.search);
-                targetHistoryId = urlParams.get('id');
-            }
+        const pathParts = window.location.pathname.split('/').filter(Boolean);
+        let targetHistoryId = null;
+        const appIndex = pathParts.indexOf('app');
+        if (appIndex !== -1 && pathParts.length > appIndex + 1) {
+            targetHistoryId = pathParts[appIndex + 1];
+        }
 
-            if (targetHistoryId) {
-                await loadHistoryDetail(targetHistoryId);
-            }
-        };
+        if (!targetHistoryId) {
+            const urlParams = new URLSearchParams(window.location.search);
+            targetHistoryId = urlParams.get('id');
+        }
 
+        if (targetHistoryId) {
+            await loadHistoryDetail(targetHistoryId);
+        }
+    };
+    
         function toggleSidebar() {
             const sidebar = document.getElementById('sidebar');
             const overlay = document.getElementById('sidebarOverlay');
@@ -377,19 +388,26 @@
         }
 
         // 投稿データを並び替える関数
+    // 投稿データを並び替える関数
         function sortPosts(order) {
             if (!currentPosts || currentPosts.length === 0) return;
 
             currentSortOrder = order;
 
             currentPosts.sort((a, b) => {
-                const dateA = a.collected_at ? new Date(a.collected_at) : new Date(0);
-                const dateB = b.collected_at ? new Date(b.collected_at) : new Date(0);
+                // 感情スコアなどを比較する（プロパティ名が異なる場合は適宜変更してください）
+                const scoreA = a.sentiment_score !== undefined ? a.sentiment_score : 0;
+                const scoreB = b.sentiment_score !== undefined ? b.sentiment_score : 0;
+                
+                // もし「is_positive」や「is_negative」などのフラグで判定している場合はこちら
+                // またはいいね数(likes)をポジティブの指標にする場合などは適宜調整できます
 
-                if (order === 'newest') {
-                    return dateB - dateA; // 新しい順
+                if (order === 'positive') {
+                    return scoreB - scoreA; // ポジティブが高い順（降順）
+                } else if (order === 'negative') {
+                    return scoreA - scoreB; // ネガティブが高い順（またはスコアが低い順）
                 } else {
-                    return dateA - dateB; // 古い順
+                    return 0; // それ以外の場合は並び替え順を変更しない
                 }
             });
 
@@ -413,14 +431,14 @@
                     let dateStr = '';
                     if (post.collected_at) {
                         const dateObj = new Date(post.collected_at);
-                        dateStr = `<span class="date-badge">📅 ${dateObj.toLocaleString()}</span>`;
+                        dateStr = `<span class="date-badge"> ${dateObj.toLocaleString()}</span>`;
                     }
 
                     postsHtml += `
                         <div class="post-item">
                             <div class="post-header" onclick="toggleLogicTree(this, '${post.topic_key}')">
                                 ${displaySummary}
-                                <div class="post-original">💬 「${textForTags}」</div>
+                                <div class="post-original"> 「${textForTags}」</div>
                                 ${tagsHtml}
                                 <div class="post-footer">
                                     <span class="like-badge">❤️ ${post.likes || 0} いいね</span>
@@ -448,11 +466,10 @@
                     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; flex-wrap: wrap; gap: 8px;">
                         <h4 style="margin: 0; word-break: break-all;">検索結果: ${queryTitle}</h4>
                         <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
-                            ${timeRangeStr ? `<span style="font-size: 12px; color: #9aa0a6;">🕒 ${timeRangeStr}</span>` : ''}
                             
                             <div style="display: flex; gap: 6px;">
-                                <button onclick="sortPosts('newest')" style="background: ${currentSortOrder === 'newest' ? '#8ab4f8' : '#222'}; color: ${currentSortOrder === 'newest' ? '#131314' : '#fff'}; font-weight: ${currentSortOrder === 'newest' ? 'bold' : 'normal'}; border: 1px solid ${currentSortOrder === 'newest' ? '#8ab4f8' : '#444'}; padding: 5px 10px; border-radius: 4px; font-size: 11px; cursor: pointer; transition: all 0.2s;">新しい順</button>
-                                <button onclick="sortPosts('oldest')" style="background: ${currentSortOrder === 'oldest' ? '#8ab4f8' : '#222'}; color: ${currentSortOrder === 'oldest' ? '#131314' : '#fff'}; font-weight: ${currentSortOrder === 'oldest' ? 'bold' : 'normal'}; border: 1px solid ${currentSortOrder === 'oldest' ? '#8ab4f8' : '#444'}; padding: 5px 10px; border-radius: 4px; font-size: 11px; cursor: pointer; transition: all 0.2s;">古い順</button>
+                                <button onclick="sortPosts('newest')" style="background: ${currentSortOrder === 'newest' ? '#8ab4f8' : '#222'}; color: ${currentSortOrder === 'newest' ? '#131314' : '#fff'}; font-weight: ${currentSortOrder === 'newest' ? 'bold' : 'normal'}; border: 1px solid ${currentSortOrder === 'newest' ? '#8ab4f8' : '#444'}; padding: 5px 10px; border-radius: 4px; font-size: 11px; cursor: pointer; transition: all 0.2s;">ポジティブ</button>
+                                <button onclick="sortPosts('oldest')" style="background: ${currentSortOrder === 'oldest' ? '#8ab4f8' : '#222'}; color: ${currentSortOrder === 'oldest' ? '#131314' : '#fff'}; font-weight: ${currentSortOrder === 'oldest' ? 'bold' : 'normal'}; border: 1px solid ${currentSortOrder === 'oldest' ? '#8ab4f8' : '#444'}; padding: 5px 10px; border-radius: 4px; font-size: 11px; cursor: pointer; transition: all 0.2s;">ネガティブ</button>
                             </div>
                         </div>
                     </div>
@@ -608,8 +625,6 @@
                 <div class="tree-header">
                     <div class="tree-tabs">
                         <button class="tree-tab-btn active" onclick="switchTreeTab(this, '${topicKey}', 'What')">要素分解</button>
-                        <button class="tree-tab-btn" onclick="switchTreeTab(this, '${topicKey}', 'Why')">ポジティブ</button>
-                        <button class="tree-tab-btn" onclick="switchTreeTab(this, '${topicKey}', 'How')">ネガティブ</button>
                     </div>
                 </div>
                 <div class="tree-canvas"></div>
@@ -661,5 +676,7 @@
             }
         }
     </script>
+</body>
+</html>
 </body>
 </html>
