@@ -30,12 +30,12 @@ def insert_sns_post(post_data: dict):
 
 # 送信するデータ（original_post_id が重複しないように現在の時間を付与）
 new_post = {
-    "platform": "X",
+    "platform": "X",#プラットフォーム　スレッズ　X Yahoo!ニュース
     "original_post_id": f"test_post_{int(time.time())}",  # 毎回ユニークなIDになるようにする
-    "post_text": "神戸港の護岸は釣り禁止ばかり。市長のアタマが硬い固い堅い？僕ら釣り人はアタマが痛い。港でのゴミの放置に関して厳しくする政策はないんかな？せめて沖堤防の渡船くらい許すべきですわ。今の神戸市にあまり税金を納めたらダメです。",
+    "post_text": "",#投稿文を入れる
     "author_username": "test_user",
-    "likes_count": 0,
-    "replies_count": 0
+    "likes_count": 0,#いいね数
+    "replies_count": 0#返信の数
 }
 
 # コメントアウトを外して実行
