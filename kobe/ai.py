@@ -3,12 +3,13 @@ import json
 from typing import Dict, Any, Optional
 from dotenv import load_dotenv
 from google import genai
+from google.genai import types
 
 from sklearn.preprocessing import MinMaxScaler
 import numpy as np
 
 # database.py から必要な保存関数をインポートする
-from database import get_supabase_client, insert_ai_analysis, upsert_issue_catalog, link_issue_and_post
+from database import *
 
 # .env ファイルから環境変数を読み込む
 load_dotenv()
@@ -27,73 +28,54 @@ def get_ai_engine():
 class AnalysisEngine:
     def __init__(self):
         self.supabase = get_supabase_client()
-        # 整数値のタプルに修正するか、使っていない場合はこの行自体を削除してOKです
         self.scaler = MinMaxScaler(feature_range=(0, 1))
 
     def _calculate_priority_with_ml(self, ai_base_priority: int, likes: int, replies: int, impressions: int) -> int:
         """
         scikit-learnの処理概念や特徴量スケーリングを応用し、
-        AIが算出した深刻度とエンゲージメント指標（いいね、コメント、インプレッション）を統合して優先度を算出する。
+        AIが算出した深刻度とエンゲージメント指標を統合して優先度を算出する。
         """
-        # エンゲージメントの生データを配列にする [likes, replies, impressions]
         raw_features = np.array([[float(likes), float(replies), float(impressions)]])
+        weights = np.array([0.4, 0.4, 0.2])
         
-        # 仮の基準値を用いた正規化（実運用では過去データの統計量等に合わせる）
-        # 例として、いいね最大100、返信最大50、インプレッション最大10000を想定したスケーリング
-        weights = np.array([0.4, 0.4, 0.2])  # 各指標の重み付け
-        
-        # 特徴量の重み付き合算値を算出
         engagement_score = np.dot(raw_features, weights)[0]
-        
-        # シグモイド関数やクリッピングで 0〜30点分のブースト値に変換
         engagement_boost = min(30.0, float(engagement_score) * 0.5)
         
-        # AI評価（最大70点分）＋ エンゲージメント補正（最大30点分）
         total_score = int((ai_base_priority * 0.7) + engagement_boost)
         return max(0, min(100, total_score))
 
     def generate_analysis(self, post_id: Any, text: str, like_count: int, reply_count: int = 0, impressions: int = 0):
         """
-        1件のSNS投稿をGeminiで要約・分析し、エンゲージメント指標をscikit-learn系ロジックで統合してDBへ保存する
+        1件のSNS投稿をGeminiで要約・分析し、エンゲージメント指標を統合してDBへ保存する
         """
         try:
             prompt = f"""
-            以下の市民の投稿を分析・要約し、必ず以下のJSON形式のみで返してください（余計な解説やマークダウン以外のテキストは不要です）。
+            以下の市民の投稿を「What（何が起きているか）」に絞って要素分解し、JSON形式のみで返してください（解説やマークダウンは不要）。
+
             投稿内容: "{text}"
-            いいね数: {like_count}
-            返信数: {reply_count}
-            インプレッション数: {impressions}
-            
+
             要件:
-            1. ai_summary: 投稿内容の簡潔な要約文（30文字〜50文字程度）
-            2. sentiment_score: -1.0(最悪)〜1.0(最高)の感情スコア（数値）
-            3. what_tree: 大分類、中分類、小分類を含むツリー構造 (name, children)
-            4. base_priority: 0-100のテキスト単体での深刻度（整数）
-            5. tags: 投稿内容を象徴する日本語のキーワード・ハッシュタグのリスト（例: ["#再開発", "#神戸市", "#市民の声"]。2〜4個程度）
+            1. ai_summary: 30〜50文字程度の要約
+            2. sentiment_score: -1.0〜1.0の感情スコア
+            3. what_tree: 「対象」「問題」「影響」の階層を持つJSONオブジェクト（name と children）
+            4. base_priority: 0〜100の深刻度
+            5. tags: キーワードのリスト（2〜4個）
             """
             
             response = client.models.generate_content(
-                model="gemini-2.5-flash",
+                model="gemini-3.6-flash",
                 contents=prompt,
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json"
+                )
             )
             
-            raw_text = response.text if response.text else ""
-            raw_text = raw_text.strip()
-
-            if raw_text.startswith("```json"):
-                raw_text = raw_text[7:]
-            if raw_text.startswith("```"): 
-                raw_text = raw_text[3:]
-            if raw_text.endswith("```"):
-                raw_text = raw_text[:-3]
-
-            data = json.loads(raw_text.strip())
+            response_text = response.text if response.text else "{}"
+            data = json.loads(response_text)
             post_summary = data.get("ai_summary", text[:50])
 
-            # AIが算出した基本深刻度を取得
             base_priority = data.get("base_priority", data.get("priority_score", 50))
             
-            # scikit-learnベースのロジックでエンゲージメントを反映した最終優先度を計算
             final_priority = self._calculate_priority_with_ml(
                 ai_base_priority=base_priority,
                 likes=like_count,
@@ -158,5 +140,121 @@ class AnalysisEngine:
         except Exception as e:
             print(f"Catalog Save Error: {e}")
 
-# インスタンス化
-engine = AnalysisEngine()
+    def analyze_posts_from_db(self):
+        """
+        sns_posts テーブルからデータを直接参照し、AI分析を実行するメソッド
+        """
+        try:
+            response = self.supabase.table("sns_posts").select("*").execute()
+            posts = response.data
+
+            if not posts:
+                print("sns_posts にデータがありません。")
+                return
+
+            for post in posts:
+                # post が辞書型であることを安全に確認
+                if not isinstance(post, dict):
+                    continue
+
+                post_id = post.get("id")
+                text = str(post.get("post_text") or "")
+                
+                # 安全に数値化
+                try:
+                    likes = int(post.get("likes_count", 0) or 0) # type: ignore
+                except (TypeError, ValueError):
+                    likes = 0
+
+                try:
+                    replies = int(post.get("replies_count", 0) or 0) # type: ignore
+                except (TypeError, ValueError):
+                    replies = 0
+                
+                # ★ ここにあった「既存チェック (existing)」の処理を削除しました
+                
+                print(f"Post ID: {post_id} のAI分析を開始します...")
+                
+                self.generate_analysis(
+                    post_id=post_id,
+                    text=text,
+                    like_count=likes,
+                    reply_count=replies,
+                    impressions=0
+                )
+
+        except Exception as e:
+            print(f"DB Fetch & Analysis Error: {e}")
+
+    def analyze_issue_catalog_aggregation(self):
+        """
+        issue_catalog に集まった課題や関連する複数の投稿をグループごとに集約し、
+        さらに深いレベルの「都市全体の構造的課題・原因」をGeminiにメタ解析させる
+        """
+        try:
+            # 1. カタログに登録されている課題をすべて取得
+            response = self.supabase.table("issue_catalog").select("*").execute()
+            catalogs = response.data
+
+            if not catalogs:
+                print("issue_catalog にデータがありません。")
+                return
+
+            for catalog in catalogs:
+                if not isinstance(catalog, dict):
+                    continue
+                
+                issue_id = catalog.get("id")
+                main_cat = catalog.get("main_category")
+                sub_cat = catalog.get("sub_category")
+                summary = catalog.get("ai_summary")
+
+                print(f"カテゴリ [{main_cat} / {sub_cat}] のメタ解析を実行中...")
+
+                # 2. この課題に紐づくすべてのSNS投稿テキストを集める
+                relations = self.supabase.table("issue_post_relations").select("sns_post_id").eq("issue_id", issue_id).execute()
+                post_ids = [r["sns_post_id"] for r in relations.data if isinstance(r, dict) and "sns_post_id" in r]
+
+                collected_texts = []
+                if post_ids:
+                    posts_res = self.supabase.table("sns_posts").select("post_text").in_("id", post_ids).execute()
+                    collected_texts = [p["post_text"] for p in posts_res.data if isinstance(p, dict) and "post_text" in p]
+
+                # 3. まとめたテキストを元に、Geminiに「さらに深い上位の要素分解（なぜなぜ分析・構造的要因）」を指示する
+                meta_prompt = f"""
+                以下は、市民から寄せられた「{main_cat}（{sub_cat}）」に関する複数の具体的な不満・意見です。
+                これらの声をメタ解析（横断的分析）し、行政として取り組むべき「根本的な構造的要因」や「政策的背景」を深く要素分解してください。
+                
+                集約された意見・要約:
+                - {summary}
+                - デバッグ用生データ抜粋: {json.dumps(collected_texts[:5], ensure_ascii=False)}
+                
+                要件（必ずJSON形式のみで返してください）:
+                1. structural_cause: この問題を引き起こしている根本的な制度的・構造的原因の要約（40〜60文字）
+                2. policy_recommendation: 行政が取るべき具体的な改善策やアプローチの提案
+                3. deeper_tree: さらに詳細な原因・影響・対策に分かれるロジックツリー構造 (name, children)
+                """
+
+                response = client.models.generate_content(
+                    model="gemini-3.6-flash",
+                    contents=meta_prompt,
+                    config=types.GenerateContentConfig(
+                        response_mime_type="application/json"
+                    )
+                )
+                
+                meta_data = json.loads(response.text if response.text else "{}")
+                print(f"メタ解析完了: {meta_data.get('structural_cause')}")
+
+                # 必要であれば、解析結果を issue_catalog の新しいカラム（例: structural_cause など）に保存・アップデートする
+                self.supabase.table("issue_catalog").update({
+                    "ai_summary": f"【構造的要因】{meta_data.get('structural_cause', summary)}"
+                }).eq("id", issue_id).execute()
+
+        except Exception as e:
+            print(f"Meta Analysis Error: {e}")
+        
+# 実行用ブロック
+if __name__ == "__main__":
+    engine = get_ai_engine()
+    engine.analyze_posts_from_db()

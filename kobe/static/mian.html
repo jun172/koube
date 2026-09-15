@@ -2,161 +2,14 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <link rel="icon" href="/imag.png" type="image/png">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <link rel="icon" href="/static/imag.png" type="image/png">
     <title>神戸市SNS分析ダッシュボード</title>
-    <!-- D3.js ライブラリ -->
+    <link rel="icon" href="/static/imag.png" type="image/png">
+    <!-- D3.js -->
     <script src="https://d3js.org/d3.v7.min.js"></script>
-    <style>
-        body { margin: 0; background-color: #131314; color: #e3e3e3; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; overflow: hidden; }
-        .app-container { display: flex; height: 100vh; overflow: hidden; position: relative; }
-
-        /* サイドバー */
-        .sidebar { width: 260px; background-color: #1e1f20; padding: 24px 20px; border-right: 1px solid #333; box-sizing: border-box; display: flex; flex-direction: column; overflow-y: auto; flex-shrink: 0; transition: transform 0.3s ease; z-index: 100; }
-        .sidebar h3 { font-size: 14px; color: #aaa; margin-top: 20px; margin-bottom: 12px; font-weight: normal; }
-        .sidebar ul { padding: 0; margin: 0; }
-        .sidebar li { padding: 10px 0; font-size: 14px; cursor: pointer; list-style: none; color: #e3e3e3; }
-        .sidebar li:hover { color: #8ab4f8; }
-
-        /* ユーザー名表示エリア */
-        .user-welcome { font-size: 14px; color: #8ab4f8; font-weight: bold; padding-bottom: 15px; border-bottom: 1px solid #333; }
-
-        /* 新しいチャットボタン */
-        .new-chat-btn { margin: 15px 0; padding: 10px; background-color: #8ab4f8; color: #131314; border: none; border-radius: 8px; font-weight: bold; cursor: pointer; transition: background-color 0.2s, transform 0.1s; }
-        .new-chat-btn:hover { background-color: #aecbfa; }
-        .new-chat-btn:active { transform: scale(0.98); }
-
-        /* モバイル用ハンバーガーメニューボタン */
-        .mobile-menu-btn { display: none; position: fixed; top: 12px; left: 12px; z-index: 101; background: #1e1f20; border: 1px solid #444746; color: #e3e3e3; padding: 8px 12px; border-radius: 8px; cursor: pointer; font-size: 16px; align-items: center; justify-content: center; }
-
-        /* サイドバーの背景オーバーレイ（スマホ用） */
-        .sidebar-overlay { display: none; position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(0,0,0,0.5); z-index: 99; }
-
-        /* メインコンテンツ */
-        .main-content { flex: 1; display: flex; flex-direction: column; position: relative; overflow: hidden; min-width: 0; }
-        #mainDisplayArea { flex: 1; overflow-y: auto; padding: 40px; display: flex; flex-direction: column; align-items: center; justify-content: center; box-sizing: border-box; scroll-behavior: smooth; -webkit-overflow-scrolling: touch; }
-        
-        /* 初期ウェルカム画面 */
-        .welcome-container { text-align: center; max-width: 600px; width: 100%; display: flex; flex-direction: column; align-items: center; gap: 24px; animation: fadeIn 0.4s ease-out; padding: 0 20px; box-sizing: border-box; }
-        .welcome-title { font-size: 32px; font-weight: bold; background: linear-gradient(90deg, #8ab4f8, #c58af9); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin: 0; word-break: break-all; }
-        .welcome-subtitle { font-size: 16px; color: #aaa; margin: 0; }
-
-        /* 検索結果カード（全体を囲む大きなカード） */
-        .analysis-card { background-color: #1e1f20; padding: 30px; border-radius: 16px; border: 1px solid #333; max-width: 800px; width: 100%; margin-bottom: 24px; box-sizing: border-box; box-shadow: 0 4px 20px rgba(0,0,0,0.3); animation: fadeIn 0.3s ease-out; }
-        .analysis-card h4 { margin-top: 0; margin-bottom: 24px; font-size: 16px; color: #e3e3e3; font-weight: normal; border-bottom: 1px solid #333; padding-bottom: 12px; }
-        
-        /* 投稿アイテム */
-        .post-item { 
-            padding: 16px 0; 
-            margin-bottom: 16px; 
-            border-bottom: 1px solid rgba(255, 255, 255, 0.08); 
-            transition: opacity 0.2s ease;
-        }
-        .post-item:last-child {
-            border-bottom: none;
-        }
-        .post-header { display: flex; flex-direction: column; cursor: pointer; }
-        
-        /* バッジやテキストのスタイル */
-        .post-summary { font-weight: 600; color: #ffffff; font-size: 15px; margin-bottom: 8px; line-height: 1.5; }
-        .post-original { 
-            font-size: 14px; 
-            color: #c4c7c5; 
-            margin-bottom: 8px; 
-            line-height: 1.6; 
-            padding: 4px 0; 
-            word-break: break-all;
-        }
-        .post-footer { display: flex; justify-content: space-between; align-items: center; margin-top: 8px; font-size: 12px; color: #8ab4f8; flex-wrap: wrap; gap: 6px; }
-        .like-badge { background: rgba(138, 180, 248, 0.1); padding: 3px 8px; border-radius: 12px; color: #8ab4f8; font-weight: 500; }
-        .date-badge { color: #9aa0a6; font-size: 11px; }
-
-        /* 下部入力エリア */
-        .bottom-input-section { padding: 20px 40px 30px; display: flex; flex-direction: column; align-items: center; gap: 12px; background-color: #131314; width: 100%; box-sizing: border-box; border-top: 1px solid rgba(255,255,255,0.05); }
-        
-        /* タグコンテナ（追加・削除ボタン付き） */
-        .tag-container { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; align-items: center; max-width: 600px; width: 100%; }
-        .tag { background-color: #1e1f20; padding: 6px 12px; border-radius: 20px; font-size: 13px; cursor: pointer; border: 1px solid #444746; color: #e3e3e3; display: inline-flex; align-items: center; gap: 6px; transition: background 0.2s, border-color 0.2s; }
-        .tag:hover { background-color: #333537; border-color: #8ab4f8; }
-        .tag-delete { background: none; border: none; color: #aaa; cursor: pointer; font-size: 14px; padding: 0; line-height: 1; border-radius: 50%; width: 16px; height: 16px; display: inline-flex; align-items: center; justify-content: center; transition: color 0.2s, background 0.2s; }
-        .tag-delete:hover { color: #ff8ab4; background: rgba(255,138,180,0.15); }
-        
-        /* タグ追加用ボタン・フォーム */
-        .add-tag-btn { background: #1e1f20; border: 1px dashed #555; color: #aaa; padding: 6px 12px; border-radius: 20px; font-size: 13px; cursor: pointer; transition: all 0.2s; }
-        .add-tag-btn:hover { border-color: #8ab4f8; color: #8ab4f8; background: rgba(138,180,248,0.05); }
-        .tag-input-form { display: inline-flex; align-items: center; gap: 4px; background: #1e1f20; border: 1px solid #8ab4f8; padding: 2px 8px; border-radius: 20px; }
-        .tag-input-form input { background: none; border: none; color: #fff; font-size: 13px; outline: none; width: 90px; }
-        .tag-input-form button { background: #8ab4f8; color: #131314; border: none; border-radius: 10px; padding: 2px 8px; font-size: 11px; font-weight: bold; cursor: pointer; }
-
-        .search-container { position: relative; width: 100%; max-width: 600px; }
-        .search-input { width: 100%; padding: 16px 24px; padding-right: 60px; border-radius: 30px; border: 1px solid #444746; background: #1e1f20; color: #e3e3e3; outline: none; box-sizing: border-box; font-size: 15px; transition: border-color 0.2s, box-shadow 0.2s; -webkit-appearance: none; }
-        .search-input:focus { border-color: #8ab4f8; box-shadow: 0 0 0 2px rgba(138, 180, 248, 0.2); }
-        .search-icon-button { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); background: rgba(118, 118, 118, 0.5); border: none; border-radius: 50%; width: 40px; height: 40px; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 16px; transition: background 0.2s, transform 0.1s; backdrop-filter: blur(4px); }
-        .search-icon-button:hover { background: #9b9b9b; }
-        .search-icon-button:active { transform: translateY(-50%) scale(0.95); }
-
-        /* ツリーコンテナ＆タブ */
-        .tree-container { margin-top: 15px; padding: 15px; background-color: #171819; border-radius: 12px; border: 1px solid #444746; animation: expandDown 0.3s ease-out; overflow: hidden; }
-        .tree-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; overflow-x: auto; padding-bottom: 4px; }
-        .tree-tabs { display: flex; gap: 8px; flex-shrink: 0; }
-        .tree-tab-btn { background-color: #1e1f20; color: #aaa; border: 1px solid #444746; padding: 6px 14px; border-radius: 6px; font-size: 12px; cursor: pointer; transition: all 0.2s; white-space: nowrap; }
-        .tree-tab-btn:hover { color: #e3e3e3; border-color: #8ab4f8; }
-        .tree-tab-btn.active { background-color: #8ab4f8; color: #131314; font-weight: bold; border-color: #8ab4f8; }
-        .tree-canvas { width: 100%; display: flex; justify-content: center; min-height: 160px; overflow-x: auto; }
-
-        /* 履歴アイテム */
-        .history-item { display: flex; justify-content: space-between; align-items: center; padding: 8px 10px; border-radius: 6px; margin-bottom: 4px; transition: background 0.15s; }
-        .history-item:hover { background: rgba(255, 255, 255, 0.04); }
-        .history-item span { cursor: pointer; color: #ccc; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; margin-right: 8px; font-size: 13px; }
-        .history-item span:hover { color: #8ab4f8; }
-
-        /* レスポンシブ対応 (スマホ・タブレット) */
-        @media (max-width: 768px) {
-            .sidebar {
-                position: fixed;
-                top: 0;
-                left: 0;
-                height: 100%;
-                transform: translateX(-100%);
-                box-shadow: 4px 0 15px rgba(0,0,0,0.5);
-            }
-            .sidebar.open {
-                transform: translateX(0);
-            }
-            .sidebar-overlay.open {
-                display: block;
-            }
-            .mobile-menu-btn {
-                display: flex;
-            }
-            .main-content {
-                padding-top: 50px;
-            }
-            #mainDisplayArea {
-                padding: 16px;
-            }
-            .analysis-card {
-                padding: 16px;
-            }
-            .bottom-input-section {
-                padding: 15px 16px 20px;
-            }
-            .welcome-title {
-                font-size: 24px;
-            }
-        }
-
-        /* アニメーション */
-        @keyframes fadeIn {
-            from { opacity: 0; transform: translateY(6px); }
-            to { opacity: 1; transform: translateY(0); }
-        }
-        @keyframes expandDown {
-            from { opacity: 0; max-height: 0; padding-top: 0; padding-bottom: 0; }
-            to { opacity: 1; max-height: 350px; padding: 15px; }
-        }
-    </style>
+    
+    <!-- CSSのパスを /static/... にする -->
+    <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
     <!-- スマホ用メニューボタン -->
@@ -204,479 +57,471 @@
             </div>
         </main>
     </div>
+<!-- D3.js本体 -->
+<script>// main.js
+const API_BASE_URL = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' 
+    ? 'http://localhost:8000' 
+    : '';
 
-    <script>
-        // ローカル環境なら localhost:8000、本番環境なら同じドメインを自動で切り替え
-        const API_BASE_URL = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' 
-            ? 'http://localhost:8000' 
-            : '';
+let currentPosts = [];
+let currentQueryTitle = "";
+let customTags = JSON.parse(localStorage.getItem("customTags")) || ['神戸市', '不満'];
 
-        // 現在表示しているデータを保持する変数（並び替え用）
-        let currentPosts = [];
-        let currentQueryTitle = "";
+window.onload = async function() {
+    const name = localStorage.getItem("userName");
+    if (!name) {
+        window.location.href = '/static/login.html';
+        return;
+    }
 
-        let currentSortOrder = 'newest'; // 並び順
+    const welcomeUser = document.getElementById("welcome-user");
+    if (welcomeUser) {
+        welcomeUser.textContent = `ようこそ、${name} さん`;
+    }
 
-        // キーワードの管理用（初期値を # なしに変更）
-        let customTags = JSON.parse(localStorage.getItem("customTags")) || ['神戸市', '不満'];
+    renderTags();
+    await fetchAndRenderHistories();
 
+    const pathParts = window.location.pathname.split('/').filter(Boolean);
+    let targetHistoryId = null;
+    const appIndex = pathParts.indexOf('app');
+    if (appIndex !== -1 && pathParts.length > appIndex + 1) {
+        targetHistoryId = pathParts[appIndex + 1];
+    }
 
-        window.onload = async function() {
-        const name = localStorage.getItem("userName");
-    
-        // ログイン情報（名前）がない場合だけログイン画面などに飛ばす
-        if (!name) {
-            window.location.href = '/static/login.html'; // ログイン画面のパス
-            return;
-        }
+    if (!targetHistoryId) {
+        const urlParams = new URLSearchParams(window.location.search);
+        targetHistoryId = urlParams.get('id');
+    }
 
-        // ここに到達した時点で名前はあるので、画面に表示する
-        const welcomeUser = document.getElementById("welcome-user");
-        if (welcomeUser) {
-            welcomeUser.textContent = `ようこそ、${name} さん`;
-        }
+    if (targetHistoryId) {
+        await loadHistoryDetail(targetHistoryId);
+    }
+};
 
+function toggleSidebar() {
+    const sidebar = document.getElementById('sidebar');
+    const overlay = document.getElementById('sidebarOverlay');
+    sidebar.classList.toggle('open');
+    overlay.classList.toggle('open');
+}
+
+// --- タグ管理関連 ---
+function renderTags() {
+    const container = document.getElementById('tagContainer');
+    if (!container) return;
+    let html = '';
+
+    customTags.forEach((tag, index) => {
+        html += `
+            <span class="tag">
+                <span onclick="addTagToSearch('${tag}')">${tag}</span>
+                <button class="tag-delete" onclick="event.stopPropagation(); removeTag(${index})" title="削除">×</button>
+            </span>
+        `;
+    });
+
+    html += `<button class="add-tag-btn" onclick="showAddTagInput()">+ 追加</button>`;
+    container.innerHTML = html;
+}
+
+function showAddTagInput() {
+    const container = document.getElementById('tagContainer');
+    if (!container) return;
+    let html = '';
+    customTags.forEach((tag, index) => {
+        html += `
+            <span class="tag">
+                <span onclick="addTagToSearch('${tag}')">${tag}</span>
+                <button class="tag-delete" onclick="event.stopPropagation(); removeTag(${index})" title="削除">×</button>
+            </span>
+        `;
+    });
+
+    html += `
+        <span class="tag-input-form">
+            <input type="text" id="newTagInput" placeholder="キーワード" onkeydown="if(event.key === 'Enter') confirmAddTag()">
+            <button onclick="confirmAddTag()">追加</button>
+        </span>
+    `;
+    container.innerHTML = html;
+    const input = document.getElementById('newTagInput');
+    if (input) input.focus();
+}
+
+function confirmAddTag() {
+    const input = document.getElementById('newTagInput');
+    if (!input) return;
+    let val = input.value.trim();
+    if (!val) {
         renderTags();
+        return;
+    }
+
+    if (!customTags.includes(val)) {
+        customTags.push(val);
+        localStorage.setItem("customTags", JSON.stringify(customTags));
+    }
+    renderTags();
+}
+
+function removeTag(index) {
+    customTags.splice(index, 1);
+    localStorage.setItem("customTags", JSON.stringify(customTags));
+    renderTags();
+}
+
+function addTagToSearch(tag) {
+    const input = document.getElementById('searchInput');
+    if (input) {
+        input.value = tag;
+        executeSearch();
+    }
+}
+
+function renderHashtags(text) {
+    if (!text) return '';
+    const matches = text.match(/#[\w\u3000-\u30ff\u4e00-\u9faf]+/g);
+    if (!matches || matches.length === 0) return '';
+
+    return '<div class="post-tags" style="margin-top: 6px; display: flex; flex-wrap: wrap; gap: 6px;">' +
+        matches.map(tag => `<span onclick="event.stopPropagation(); addTagToSearch('${tag}')" style="background: rgba(138,180,248,0.1); color: #8ab4f8; padding: 2px 8px; border-radius: 4px; font-size: 11px; cursor: pointer; border: 1px solid rgba(138,180,248,0.2); transition: background 0.2s;">${tag}</span>`).join('') +
+        '</div>';
+}
+
+// --- 履歴関連 ---
+async function fetchAndRenderHistories() {
+    try {
+        const response = await fetch(`${API_BASE_URL}/api/histories`);
+        if (!response.ok) throw new Error("履歴一覧の取得に失敗しました");
+        
+        const histories = await response.json();
+        const historyListContainer = document.getElementById('history-list');
+        if (!historyListContainer) return;
+
+        let html = '<h3>検索履歴</h3>';
+        if (histories.length === 0) {
+            html += '<p style="color:#aaa; font-size:12px; padding:5px;">履歴はまだありません</p>';
+        } else {
+            histories.forEach(item => {
+                html += `
+                    <div class="history-item">
+                        <span onclick="selectHistory('${item.id}')">
+                            ${item.query}
+                        </span>
+                        <button onclick="deleteHistory(event, '${item.id}')" style="background: none; border: none; border-radius: 6px; cursor: pointer; color: #aaa; padding: 4px 6px; display: flex; align-items: center; transition: background 0.2s, color 0.2s;" title="削除">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                <path d="M4 7H20" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                                <path d="M6 7L7 20C7 20.5523 7.44772 21 8 21H16C16.5523 21 17 20.5523 17 20L18 7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                                <path d="M9 7V4C9 3.44772 9.44772 3 10 3H14C14.5523 3 15 3.44772 15 4V7" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                                <path d="M10 11V17" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                                <path d="M14 11V17" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                            </svg>
+                        </button>
+                    </div>
+                `;
+            });
+        }
+        historyListContainer.innerHTML = html;
+    } catch (error) {
+        console.error("履歴のロードエラー:", error);
+    }
+}
+
+async function selectHistory(historyId) {
+    const newUrl = `/app/${historyId}`;
+    window.history.pushState({ path: newUrl }, '', newUrl);
+    await loadHistoryDetail(historyId);
+    if (window.innerWidth <= 768) {
+        toggleSidebar();
+    }
+}
+
+// --- 投稿表示 & タブ切り替え関連 ---
+async function loadHistoryDetail(historyId) {
+    try {
+        const response = await fetch(`${API_BASE_URL}/api/history/${historyId}?sentiment=all`);
+        if (!response.ok) throw new Error("指定された履歴が見つかりません");
+
+        const data = await response.json();
+        currentQueryTitle = data.query;
+        currentPosts = data.results && data.results.posts ? data.results.posts : [];
+
+        renderPostsContainer(currentQueryTitle, currentPosts, 'all', historyId);
+    } catch (error) {
+        console.error("履歴詳細の取得エラー:", error);
+    }
+}
+
+async function switchSentimentTab(historyId, sentimentType) {
+    if (!historyId) {
+        alert("履歴IDが見つからないため、フィルタリングできません。一度検索を行うか履歴を選択してください。");
+        return;
+    }
+    try {
+        const response = await fetch(`${API_BASE_URL}/api/history/${historyId}?sentiment=${sentimentType}`);
+        if (!response.ok) throw new Error("データの取得に失敗しました");
+
+        const data = await response.json();
+        const posts = data.results && data.results.posts ? data.results.posts : [];
+
+        renderPostsContainer(currentQueryTitle, posts, sentimentType, historyId);
+    } catch (error) {
+        console.error("感情タブ切り替えエラー:", error);
+        alert("感情別のデータ切り替えに失敗しました。");
+    }
+}
+
+function renderPostsContainer(queryTitle, posts, currentTab = 'all', historyId = '') {
+    const displayArea = document.getElementById('mainDisplayArea');
+    if (!displayArea) return;
+    displayArea.style.justifyContent = 'flex-start';
+
+    let postsHtml = '';
+    if (posts.length === 0) {
+        postsHtml = `<p style="color:#aaa; font-size:13px; padding: 10px 0;">該当する投稿データが見つかりませんでした。</p>`;
+    } else {
+        posts.forEach((post) => {
+            const textForTags = post.title || post.post_text || '';
+            const displaySummary = post.summary ? `<div class="post-summary"> ${post.summary}</div>` : '';
+            const tagsHtml = renderHashtags(textForTags);
+
+            let dateStr = '';
+            if (post.collected_at) {
+                const dateObj = new Date(post.collected_at);
+                dateStr = `<span class="date-badge"> ${dateObj.toLocaleString()}</span>`;
+            }
+
+            postsHtml += `
+                <div class="post-item">
+                    <div class="post-header" onclick="toggleLogicTree(this, '${post.id}')">
+                        ${displaySummary}
+                        <div class="post-original"> 「${textForTags}」</div>
+                        ${tagsHtml}
+                        <div class="post-footer">
+                            <span class="like-badge">❤️ ${post.likes || 0} いいね</span>
+                            ${dateStr}
+                        </div>
+                    </div>
+                </div>
+            `;
+        });
+    }
+
+    const currentId = historyId || getCurrentHistoryId();
+
+    displayArea.innerHTML = `
+        <div class="analysis-card" style="width: 100%; box-sizing: border-box;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; flex-wrap: wrap; gap: 8px;">
+                <h4 style="margin: 0; word-break: break-all;">検索結果: ${queryTitle}</h4>
+                <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
+                    <div style="display: flex; gap: 6px;">
+                        <button onclick="switchSentimentTab('${currentId}', 'all')" style="background: ${currentTab === 'all' ? '#8ab4f8' : '#222'}; color: ${currentTab === 'all' ? '#131314' : '#fff'}; font-weight: ${currentTab === 'all' ? 'bold' : 'normal'}; border: 1px solid ${currentTab === 'all' ? '#8ab4f8' : '#444'}; padding: 5px 10px; border-radius: 4px; font-size: 11px; cursor: pointer; transition: all 0.2s;">すべて</button>
+                        <button onclick="switchSentimentTab('${currentId}', 'positive')" style="background: ${currentTab === 'positive' ? '#8ab4f8' : '#222'}; color: ${currentTab === 'positive' ? '#131314' : '#fff'}; font-weight: ${currentTab === 'positive' ? 'bold' : 'normal'}; border: 1px solid ${currentTab === 'positive' ? '#8ab4f8' : '#444'}; padding: 5px 10px; border-radius: 4px; font-size: 11px; cursor: pointer; transition: all 0.2s;">ポジティブ</button>
+                        <button onclick="switchSentimentTab('${currentId}', 'negative')" style="background: ${currentTab === 'negative' ? '#8ab4f8' : '#222'}; color: ${currentTab === 'negative' ? '#131314' : '#fff'}; font-weight: ${currentTab === 'negative' ? 'bold' : 'normal'}; border: 1px solid ${currentTab === 'negative' ? '#8ab4f8' : '#444'}; padding: 5px 10px; border-radius: 4px; font-size: 11px; cursor: pointer; transition: all 0.2s;">ネガティブ</button>
+                    </div>
+                </div>
+            </div>
+            ${postsHtml}
+        </div>
+    `;
+}
+
+function getCurrentHistoryId() {
+    const pathParts = window.location.pathname.split('/').filter(Boolean);
+    const appIndex = pathParts.indexOf('app');
+    if (appIndex !== -1 && pathParts.length > appIndex + 1) {
+        return pathParts[appIndex + 1];
+    }
+    const urlParams = new URLSearchParams(window.location.search);
+    return urlParams.get('id') || '';
+}
+
+async function executeSearch() {
+    const input = document.getElementById('searchInput');
+    const query = input.value.trim();
+    if(!query) return;
+
+    try {
+        const response = await fetch(`${API_BASE_URL}/api/search?q=${encodeURIComponent(query)}`);
+        const data = await response.json();
+
+        if (data.history_id) {
+            const newUrl = `/app/${data.history_id}`;
+            window.history.pushState({ path: newUrl }, '', newUrl);
+        }
+
+        currentQueryTitle = data.query || query;
+        currentPosts = data.results && data.results.posts ? data.results.posts : (data.posts || []);
+
+        const currentId = data.history_id || getCurrentHistoryId();
+        renderPostsContainer(currentQueryTitle, currentPosts, 'all', currentId);
+        
+        input.value = '';
+        const displayArea = document.getElementById('mainDisplayArea');
+        if (displayArea) displayArea.scrollTo({ top: displayArea.scrollHeight, behavior: 'smooth' });
+
         await fetchAndRenderHistories();
+    } catch (error) {
+        console.error("検索データの取得に失敗しました:", error);
+        alert("サーバーとの通信に失敗しました。APIが起動しているか確認してください。");
+    }
+}
 
-        const pathParts = window.location.pathname.split('/').filter(Boolean);
-        let targetHistoryId = null;
-        const appIndex = pathParts.indexOf('app');
-        if (appIndex !== -1 && pathParts.length > appIndex + 1) {
-            targetHistoryId = pathParts[appIndex + 1];
-        }
+function startNewChat() {
+    const newUrl = '/app';
+    window.history.pushState({ path: newUrl }, '', newUrl);
 
-        if (!targetHistoryId) {
-            const urlParams = new URLSearchParams(window.location.search);
-            targetHistoryId = urlParams.get('id');
-        }
+    const displayArea = document.getElementById('mainDisplayArea');
+    if (displayArea) {
+        displayArea.style.justifyContent = 'center';
+        displayArea.innerHTML = `
+            <div class="welcome-container" id="welcomeView">
+                <h1 class="welcome-title">神戸市 SNS分析アシスタント</h1>
+                <p class="welcome-subtitle">分析したいキーワードやハッシュタグを入力してください</p>
+            </div>
+        `;
+    }
 
-        if (targetHistoryId) {
-            await loadHistoryDetail(targetHistoryId);
+    const input = document.getElementById('searchInput');
+    if (input) input.value = '';
+    if (window.innerWidth <= 768) {
+        toggleSidebar();
+    }
+}
+
+async function deleteHistory(event, historyId) {
+    event.stopPropagation();
+    try {
+        const response = await fetch(`${API_BASE_URL}/api/history/${historyId}`, {
+            method: 'DELETE'
+        });
+        if (!response.ok) throw new Error("履歴の削除に失敗しました");
+
+        if (window.location.pathname.includes(historyId)) {
+            startNewChat();
         }
-    };
+        await fetchAndRenderHistories();
+    } catch (error) {
+        console.error("削除エラー:", error);
+        alert("履歴の削除に失敗しました。");
+    }
+}
+
+// --- tree.js 関連 ---
+async function drawTree(container, postId, treeType) {
+    const svgSelection = d3.select(container).select("svg");
     
-        function toggleSidebar() {
-            const sidebar = document.getElementById('sidebar');
-            const overlay = document.getElementById('sidebarOverlay');
-            sidebar.classList.toggle('open');
-            overlay.classList.toggle('open');
+    let rawData;
+    try {
+        const response = await fetch(`${API_BASE_URL}/api/tree/${encodeURIComponent(postId)}/${encodeURIComponent(treeType)}`);
+        rawData = await response.json();
+
+        if (!rawData || !rawData.name) {
+            rawData = { name: "データなし", children: [] };
         }
+    } catch (error) {
+        rawData = { name: "データ取得エラー", children: [] };
+    }
 
-        // キーワードの描画関数
-        function renderTags() {
-            const container = document.getElementById('tagContainer');
-            let html = '';
+    svgSelection.remove();
+    d3.select(container).selectAll("svg").remove();
 
-            customTags.forEach((tag, index) => {
-                html += `
-                    <span class="tag">
-                        <span onclick="addTagToSearch('${tag}')">${tag}</span>
-                        <button class="tag-delete" onclick="event.stopPropagation(); removeTag(${index})" title="削除">×</button>
-                    </span>
-                `;
-            });
+    const width = 750, height = 180;
+    
+    const svgElement = d3.select(container)
+        .append("svg")
+        .attr("width", "100%")
+        .attr("height", height)
+        .style("opacity", 0);
 
-            // 追加ボタン
-            html += `<button class="add-tag-btn" onclick="showAddTagInput()">+ 追加</button>`;
-            container.innerHTML = html;
-        }
+    const zoom = d3.zoom()
+        .scaleExtent([0.5, 3])
+        .on("zoom", (event) => {
+            svgGroup.attr("transform", event.transform);
+        });
 
-        // キーワード追加用インプットを表示する
-        function showAddTagInput() {
-            const container = document.getElementById('tagContainer');
-            let html = '';
-            customTags.forEach((tag, index) => {
-                html += `
-                    <span class="tag">
-                        <span onclick="addTagToSearch('${tag}')">${tag}</span>
-                        <button class="tag-delete" onclick="event.stopPropagation(); removeTag(${index})" title="削除">×</button>
-                    </span>
-                `;
-            });
+    svgElement.call(zoom);
 
-            html += `
-                <span class="tag-input-form">
-                    <input type="text" id="newTagInput" placeholder="キーワード" onkeydown="if(event.key === 'Enter') confirmAddTag()">
-                    <button onclick="confirmAddTag()">追加</button>
-                </span>
-            `;
-            container.innerHTML = html;
-            document.getElementById('newTagInput').focus();
-        }
+    const svgGroup = svgElement.append("g")
+        .attr("transform", "translate(40,20)");
 
-        // キーワードの追加を確定（#を自動付与しないように修正）
-        function confirmAddTag() {
-            const input = document.getElementById('newTagInput');
-            if (!input) return;
-            let val = input.value.trim();
-            if (!val) {
-                renderTags();
-                return;
-            }
+    svgElement.transition()
+        .duration(300)
+        .style("opacity", 1);
 
-            if (!customTags.includes(val)) {
-                customTags.push(val);
-                localStorage.setItem("customTags", JSON.stringify(customTags));
-            }
-            renderTags();
-        }
+    const root = d3.hierarchy(rawData);
+    d3.tree().size([height - 40, width - 200])(root);
 
-        // キーワードを削除する
-        function removeTag(index) {
-            customTags.splice(index, 1);
-            localStorage.setItem("customTags", JSON.stringify(customTags));
-            renderTags();
-        }
+    svgGroup.selectAll(".link")
+        .data(root.links())
+        .enter().append("path")
+        .attr("fill", "none")
+        .attr("stroke", "#8ab4f8")
+        .attr("stroke-width", 1.5)
+        .attr("opacity", 0.7)
+        .attr("d", d3.linkHorizontal().x(d => d.y).y(d => d.x));
 
-        function renderHashtags(text) {
-            if (!text) return '';
-            const matches = text.match(/#[\w\u3000-\u30ff\u4e00-\u9faf]+/g);
-            if (!matches || matches.length === 0) return '';
+    const node = svgGroup.selectAll(".node")
+        .data(root.descendants())
+        .enter().append("g")
+        .attr("transform", d => `translate(${d.y},${d.x})`);
 
-            return '<div class="post-tags" style="margin-top: 6px; display: flex; flex-wrap: wrap; gap: 6px;">' +
-                matches.map(tag => `<span onclick="event.stopPropagation(); addTagToSearch('${tag}')" style="background: rgba(138,180,248,0.1); color: #8ab4f8; padding: 2px 8px; border-radius: 4px; font-size: 11px; cursor: pointer; border: 1px solid rgba(138,180,248,0.2); transition: background 0.2s;">${tag}</span>`).join('') +
-                '</div>';
-        }
+    node.append("circle")
+        .attr("r", 0)
+        .attr("fill", "#ffffff")
+        .transition()
+        .duration(300)
+        .attr("r", 3.5);
 
-        async function fetchAndRenderHistories() {
-            try {
-                const response = await fetch(`${API_BASE_URL}/api/histories`);
-                if (!response.ok) throw new Error("履歴一覧の取得に失敗しました");
-                
-                const histories = await response.json();
-                const historyListContainer = document.getElementById('history-list');
-                if (!historyListContainer) return;
+    node.append("text")
+        .attr("dy", 3)
+        .attr("x", 8)
+        .attr("font-size", "11px")
+        .attr("fill", "#e3e3e3")
+        .style("opacity", 0)
+        .text(d => d.data.name)
+        .transition()
+        .duration(300)
+        .style("opacity", 1);
+}
 
-                let html = '<h3>検索履歴</h3>';
-                if (histories.length === 0) {
-                    html += '<p style="color:#aaa; font-size:12px; padding:5px;">履歴はまだありません</p>';
-                } else {
-                    histories.forEach(item => {
-                        html += `
-                            <div class="history-item">
-                                <span onclick="selectHistory('${item.id}')">
-                                    ${item.query}
-                                </span>
-                                <button onclick="deleteHistory(event, '${item.id}')" style="background: none; border: none; border-radius: 6px; cursor: pointer; color: #aaa; padding: 4px 6px; display: flex; align-items: center; transition: background 0.2s, color 0.2s;" title="削除" onmouseover="this.style.color='#ff8ab4'; this.style.background='rgba(255, 138, 180, 0.12)'" onmouseout="this.style.color='#aaa'; this.style.background='none'">
-                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                                        <path d="M4 7H20" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-                                        <path d="M6 7L7 20C7 20.5523 7.44772 21 8 21H16C16.5523 21 17 20.5523 17 20L18 7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                                        <path d="M9 7V4C9 3.44772 9.44772 3 10 3H14C14.5523 3 15 3.44772 15 4V7" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-                                        <path d="M10 11V17" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-                                        <path d="M14 11V17" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-                                    </svg>
-                                </button>
-                            </div>
-                        `;
-                    });
-                }
-                historyListContainer.innerHTML = html;
+function switchTreeTab(button, postId, treeType) {
+    const container = button.closest('.tree-container');
+    container.querySelectorAll('.tree-tab-btn').forEach(btn => btn.classList.remove('active'));
+    button.classList.add('active');
 
-            } catch (error) {
-                console.error("履歴のロードエラー:", error);
-            }
-        }
+    const canvas = container.querySelector('.tree-canvas');
+    drawTree(canvas, postId, treeType);
+}
 
-        async function selectHistory(historyId) {
-            const newUrl = `/app/${historyId}`;
-            window.history.pushState({ path: newUrl }, '', newUrl);
-            await loadHistoryDetail(historyId);
-            if (window.innerWidth <= 768) {
-                toggleSidebar();
-            }
-        }
+function toggleLogicTree(headerElement, postId) {
+    const parent = headerElement.parentElement;
+    let treeContainer = parent.querySelector('.tree-container');
+    
+    if (treeContainer) {
+        treeContainer.style.animation = 'fadeIn 0.2s ease-out reverse';
+        setTimeout(() => treeContainer.remove(), 180);
+        return;
+    }
 
-        // 投稿データを並び替える関数
-    // 投稿データを並び替える関数
-        function sortPosts(order) {
-            if (!currentPosts || currentPosts.length === 0) return;
+    parent.querySelectorAll('.tree-container').forEach(el => el.remove());
 
-            currentSortOrder = order;
+    treeContainer = document.createElement('div');
+    treeContainer.className = 'tree-container';
+    treeContainer.innerHTML = `
+        <div class="tree-header">
+            <div class="tree-tabs">
+                <button class="tree-tab-btn active" onclick="switchTreeTab(this, '${postId}', 'What')">要素分解</button>
+            </div>
+        </div>
+        <div class="tree-canvas"></div>
+    `;
+    parent.appendChild(treeContainer);
 
-            currentPosts.sort((a, b) => {
-                // 感情スコアなどを比較する（プロパティ名が異なる場合は適宜変更してください）
-                const scoreA = a.sentiment_score !== undefined ? a.sentiment_score : 0;
-                const scoreB = b.sentiment_score !== undefined ? b.sentiment_score : 0;
-                
-                // もし「is_positive」や「is_negative」などのフラグで判定している場合はこちら
-                // またはいいね数(likes)をポジティブの指標にする場合などは適宜調整できます
-
-                if (order === 'positive') {
-                    return scoreB - scoreA; // ポジティブが高い順（降順）
-                } else if (order === 'negative') {
-                    return scoreA - scoreB; // ネガティブが高い順（またはスコアが低い順）
-                } else {
-                    return 0; // それ以外の場合は並び替え順を変更しない
-                }
-            });
-
-            renderPostsContainer(currentQueryTitle, currentPosts);
-        }
-
-        // 検索結果や履歴のHTMLを描画する共通関数
-        function renderPostsContainer(queryTitle, posts) {
-            const displayArea = document.getElementById('mainDisplayArea');
-            displayArea.style.justifyContent = 'flex-start';
-
-            let postsHtml = '';
-            if (posts.length === 0) {
-                postsHtml = `<p style="color:#aaa; font-size:13px; padding: 10px 0;">該当する投稿データが見つかりませんでした。</p>`;
-            } else {
-                posts.forEach((post) => {
-                    const textForTags = post.title || post.post_text || '';
-                    const displaySummary = post.summary ? `<div class="post-summary">📌 ${post.summary}</div>` : '';
-                    const tagsHtml = renderHashtags(textForTags);
-
-                    let dateStr = '';
-                    if (post.collected_at) {
-                        const dateObj = new Date(post.collected_at);
-                        dateStr = `<span class="date-badge"> ${dateObj.toLocaleString()}</span>`;
-                    }
-
-                    postsHtml += `
-                        <div class="post-item">
-                            <div class="post-header" onclick="toggleLogicTree(this, '${post.topic_key}')">
-                                ${displaySummary}
-                                <div class="post-original"> 「${textForTags}」</div>
-                                ${tagsHtml}
-                                <div class="post-footer">
-                                    <span class="like-badge">❤️ ${post.likes || 0} いいね</span>
-                                    ${dateStr}
-                                </div>
-                            </div>
-                        </div>
-                    `;
-                });
-            }
-
-            // 投稿データから最古と最新の時間算出
-            let timeRangeStr = '';
-            if (posts && posts.length > 0) {
-                const validDates = posts.map(p => p.collected_at ? new Date(p.collected_at).getTime() : null).filter(Boolean);
-                if (validDates.length > 0) {
-                    const minDate = new Date(Math.min(...validDates));
-                    const maxDate = new Date(Math.max(...validDates));
-                    timeRangeStr = `${minDate.toLocaleDateString()} 〜 ${maxDate.toLocaleDateString()}`;
-                }
-            }
-
-            displayArea.innerHTML = `
-                <div class="analysis-card" style="width: 100%; box-sizing: border-box;">
-                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; flex-wrap: wrap; gap: 8px;">
-                        <h4 style="margin: 0; word-break: break-all;">検索結果: ${queryTitle}</h4>
-                        <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
-                            
-                            <div style="display: flex; gap: 6px;">
-                                <button onclick="sortPosts('newest')" style="background: ${currentSortOrder === 'newest' ? '#8ab4f8' : '#222'}; color: ${currentSortOrder === 'newest' ? '#131314' : '#fff'}; font-weight: ${currentSortOrder === 'newest' ? 'bold' : 'normal'}; border: 1px solid ${currentSortOrder === 'newest' ? '#8ab4f8' : '#444'}; padding: 5px 10px; border-radius: 4px; font-size: 11px; cursor: pointer; transition: all 0.2s;">ポジティブ</button>
-                                <button onclick="sortPosts('oldest')" style="background: ${currentSortOrder === 'oldest' ? '#8ab4f8' : '#222'}; color: ${currentSortOrder === 'oldest' ? '#131314' : '#fff'}; font-weight: ${currentSortOrder === 'oldest' ? 'bold' : 'normal'}; border: 1px solid ${currentSortOrder === 'oldest' ? '#8ab4f8' : '#444'}; padding: 5px 10px; border-radius: 4px; font-size: 11px; cursor: pointer; transition: all 0.2s;">ネガティブ</button>
-                            </div>
-                        </div>
-                    </div>
-                    ${postsHtml}
-                </div>
-            `;
-        }
-
-        async function loadHistoryDetail(historyId) {
-            try {
-                const response = await fetch(`${API_BASE_URL}/api/history/${historyId}`);
-                if (!response.ok) throw new Error("指定された履歴が見つかりません");
-
-                const data = await response.json();
-                currentQueryTitle = data.query;
-                currentPosts = data.results && data.results.posts ? data.results.posts : [];
-
-                renderPostsContainer(currentQueryTitle, currentPosts);
-
-            } catch (error) {
-                console.error("履歴詳細の取得エラー:", error);
-            }
-        }
-
-        function addTagToSearch(tag) {
-            const input = document.getElementById('searchInput');
-            input.value = (input.value ? input.value + ' ' : '') + tag;
-            input.focus();
-        }
-
-        async function executeSearch() {
-            const input = document.getElementById('searchInput');
-            const query = input.value.trim();
-            if(!query) return;
-
-            try {
-                const response = await fetch(`${API_BASE_URL}/api/search?q=${encodeURIComponent(query)}`);
-                const data = await response.json();
-
-                if (data.history_id) {
-                    const newUrl = `/app/${data.history_id}`;
-                    window.history.pushState({ path: newUrl }, '', newUrl);
-                }
-
-                currentQueryTitle = data.query || query;
-                currentPosts = data.results && data.results.posts ? data.results.posts : (data.posts || []);
-
-                renderPostsContainer(currentQueryTitle, currentPosts);
-                
-                input.value = '';
-                const displayArea = document.getElementById('mainDisplayArea');
-                displayArea.scrollTo({ top: displayArea.scrollHeight, behavior: 'smooth' });
-
-                await fetchAndRenderHistories();
-
-            } catch (error) {
-                console.error("検索データの取得に失敗しました:", error);
-                alert("サーバーとの通信に失敗しました。APIが起動しているか確認してください。");
-            }
-        }
-
-        async function drawTree(container, topicKey, treeType) {
-            const svgSelection = d3.select(container).select("svg");
-            
-            let rawData;
-            try {
-                const response = await fetch(`${API_BASE_URL}/api/tree/${encodeURIComponent(topicKey)}/${encodeURIComponent(treeType)}`);
-                rawData = await response.json();
-
-                if (!rawData || !rawData.name) {
-                    rawData = { name: topicKey, children: [{ name: "解析データなし" }] };
-                }
-            } catch (error) {
-                rawData = { name: topicKey, children: [{ name: "データ取得エラー" }] };
-            }
-
-            svgSelection.remove();
-
-            const width = 500, height = 160;
-            const svg = d3.select(container)
-                .append("svg")
-                .attr("width", width)
-                .attr("height", height)
-                .style("opacity", 0)
-                .append("g")
-                .attr("transform", "translate(60,10)");
-
-            d3.select(container).select("svg")
-                .transition()
-                .duration(300)
-                .style("opacity", 1);
-
-            const root = d3.hierarchy(rawData);
-            d3.tree().size([height - 30, width - 160])(root);
-
-            svg.selectAll(".link")
-                .data(root.links())
-                .enter().append("path")
-                .attr("fill", "none")
-                .attr("stroke", "#8ab4f8")
-                .attr("stroke-width", 1.5)
-                .attr("opacity", 0.7)
-                .attr("d", d3.linkHorizontal().x(d => d.y).y(d => d.x));
-
-            const node = svg.selectAll(".node")
-                .data(root.descendants())
-                .enter().append("g")
-                .attr("transform", d => `translate(${d.y},${d.x})`);
-
-            node.append("circle")
-                .attr("r", 0)
-                .attr("fill", "#ffffff")
-                .transition()
-                .duration(300)
-                .attr("r", 4);
-
-            node.append("text")
-                .attr("dy", 4)
-                .attr("x", 10)
-                .attr("font-size", "12px")
-                .attr("fill", "#e3e3e3")
-                .style("opacity", 0)
-                .text(d => d.data.name)
-                .transition()
-                .duration(300)
-                .style("opacity", 1);
-        }
-
-        function switchTreeTab(button, topicKey, treeType) {
-            const container = button.closest('.tree-container');
-            container.querySelectorAll('.tree-tab-btn').forEach(btn => btn.classList.remove('active'));
-            button.classList.add('active');
-
-            const canvas = container.querySelector('.tree-canvas');
-            drawTree(canvas, topicKey, treeType);
-        }
-
-        function toggleLogicTree(headerElement, topicKey) {
-            const parent = headerElement.parentElement;
-            let treeContainer = parent.querySelector('.tree-container');
-            
-            if (treeContainer) {
-                treeContainer.style.animation = 'fadeIn 0.2s ease-out reverse';
-                setTimeout(() => treeContainer.remove(), 180);
-                return;
-            }
-
-            parent.querySelectorAll('.tree-container').forEach(el => el.remove());
-
-            treeContainer = document.createElement('div');
-            treeContainer.className = 'tree-container';
-            treeContainer.innerHTML = `
-                <div class="tree-header">
-                    <div class="tree-tabs">
-                        <button class="tree-tab-btn active" onclick="switchTreeTab(this, '${topicKey}', 'What')">要素分解</button>
-                    </div>
-                </div>
-                <div class="tree-canvas"></div>
-            `;
-            parent.appendChild(treeContainer);
-
-            const canvas = treeContainer.querySelector('.tree-canvas');
-            drawTree(canvas, topicKey, 'What');
-        }
-
-        function startNewChat() {
-            const newUrl = '/app';
-            window.history.pushState({ path: newUrl }, '', newUrl);
-
-            const displayArea = document.getElementById('mainDisplayArea');
-            displayArea.style.justifyContent = 'center';
-            displayArea.innerHTML = `
-                <div class="welcome-container" id="welcomeView">
-                    <h1 class="welcome-title">神戸市 SNS分析アシスタント</h1>
-                    <p class="welcome-subtitle">分析したいキーワードやハッシュタグを入力してください</p>
-                </div>
-            `;
-
-            document.getElementById('searchInput').value = '';
-            if (window.innerWidth <= 768) {
-                toggleSidebar();
-            }
-        }
-
-        async function deleteHistory(event, historyId) {
-            event.stopPropagation();
-
-            try {
-                const response = await fetch(`${API_BASE_URL}/api/history/${historyId}`, {
-                    method: 'DELETE'
-                });
-
-                if (!response.ok) throw new Error("履歴の削除に失敗しました");
-
-                if (window.location.pathname.includes(historyId)) {
-                    startNewChat();
-                }
-
-                await fetchAndRenderHistories();
-
-            } catch (error) {
-                console.error("削除エラー:", error);
-                alert("履歴の削除に失敗しました。");
-            }
-        }
-    </script>
-</body>
-</html>
+    const canvas = treeContainer.querySelector('.tree-canvas');
+    drawTree(canvas, postId, 'What');
+}
+</script>
 </body>
 </html>

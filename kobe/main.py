@@ -9,10 +9,11 @@ from fastapi.responses import FileResponse, HTMLResponse
 from datetime import datetime, timezone
 import uuid
 
+
 # 自作モジュール
-from ai import get_ai_engine
-from database import get_supabase_client, insert_sns_post, upsert_chat_history
-from x import XPostClient
+from ai import *
+from database import *
+from x import *
 
 
 app = FastAPI(
@@ -32,10 +33,8 @@ app.add_middleware(
 
 # 各種クライアントの初期化
 supabase: Client = get_supabase_client()
-x_client = XPostClient()  # <-- ここで XApiClient をインスタンス化して定義
+x_client = XPostClient()  
 
-
-# --- Pydanticスキーマ定義 ---
 class CollectionRequest(BaseModel):
     keywords: List[str]
     history_id: Optional[str] = None
@@ -49,13 +48,14 @@ class IssueCatalogCreate(BaseModel):
     total_priority_score: int
 
 class UserSchema(BaseModel):
+    name:str
     email: str
     password: str
 
 class SignupSchema(BaseModel):
+    name: str
     email: str
     password: str
-    name: str
 
 class PostCreate(BaseModel):
     post_text: str
@@ -73,13 +73,13 @@ class PasswordResetRequestSchema(BaseModel):
 os.makedirs("static", exist_ok=True)
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
+# 1. ルート（ログイン画面など）
 @app.get("/", include_in_schema=False)
 def serve_root():
-    path = "static/login.html"
+    path = "/static/login.html"
     if not os.path.exists(path):
         return {"error": "login.html not found in static folder."}
     return FileResponse(path)
-
 
 # --- 認証系 API ---
 
@@ -104,7 +104,7 @@ def login(user: UserSchema):
     try:
         response = supabase.auth.sign_in_with_password({
             "email": user.email,
-            "password": user.password
+            "password": user.password,
         })
         return {"message": "ログイン成功", "data": response}
     except Exception as e:
@@ -271,28 +271,49 @@ def serve_reset2():
     return FileResponse("static/reset2.html")
 
 
-# --- 検索・D3.jsツリー用 API ---
+# --- キワードから投稿を取得 API ---
+# ai.py などからグローバルなAIエンジン、またはclientをインポートしている前提
 @app.get("/api/search")
 def search_issues(q: str = Query(..., description="検索キーワード")):
     try:
-        # sns_posts テーブルを起点にして直接キーワード検索を行う
+        # 1. キーワードにヒットする sns_posts を取得
         response = supabase.table("sns_posts").select(
             "id, platform, post_text, likes_count, collected_at"
         ).ilike("post_text", f"%{q}%").execute()
         
         posts = []
         if response.data:
+            # クライアントの初期化（ai.pyと同等）
+            ai_client = genai.Client()
+
             for post_info in response.data:
                 if isinstance(post_info, dict):
+                    post_id = post_info.get("id")
                     text = str(post_info.get("post_text") or "")
+                    
+                    # 2. 投稿文をその場でGeminiに要約させる
+                    summary_text = ""
+                    try:
+                        prompt = f"以下の市民の投稿を一言で簡潔に要約してください。\n\n投稿: {text}"
+                        ai_res = ai_client.models.generate_content(
+                            model="gemini-3.6-flash", # または使用しているモデル名
+                            contents=prompt
+                        )
+                        summary_text = ai_res.text.strip() if ai_res and ai_res.text else text[:40]
+                    except Exception as ai_err:
+                        print(f"Gemini dynamic summary error: {ai_err}")
+                        summary_text = text[:40] + "..." # フォールバック
+
                     posts.append({
+                        "id": post_id,  
                         "title": text,
+                        "summary": summary_text,  # 生成したAI要約をセット
                         "likes": post_info.get("likes_count", 0),
                         "topic_key": post_info.get("platform", "X"),
                         "collected_at": post_info.get("collected_at"),
-                        "sentiment_score": 0 # 必要に応じてai_analysis_resultsから取得するよう結合に変更可能
+                        "sentiment_score": 0 
                     })
-
+                
         history_id = str(uuid.uuid4())[:16]
         try:
             supabase.table("chat_histories").insert({
@@ -307,29 +328,91 @@ def search_issues(q: str = Query(..., description="検索キーワード")):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     
-#ロジックツリー
-@app.get("/api/tree/{topic_key}/{tree_type}")
-def get_d3_tree_data(topic_key: str, tree_type: str):
+
+# ロジックツリーデータ取得API
+@app.get("/api/tree/{post_id}/{tree_type}")
+def get_d3_tree_data(post_id: str, tree_type: str):
     try:
-        tree_data = {
-            "name": f"{topic_key} [{tree_type}]",
-            "children": [
-                {
-                    "name": "主要因 1",
-                    "children": [
-                        {"name": "詳細データ A"},
-                        {"name": "詳細データ B"}
-                    ]
-                },
-                {
-                    "name": "主要因 2",
-                    "children": [
-                        {"name": "詳細データ C"}
-                    ]
-                }
-            ]
+        # 1. いいね数を取得（投稿文は取得・使用しない）
+        likes = 0
+        post_res = supabase.table("sns_posts").select("likes_count").eq("id", post_id).execute()
+        if post_res.data and isinstance(post_res.data, list) and len(post_res.data) > 0:
+            first_post = post_res.data[0]
+            if isinstance(first_post, dict):
+                raw_likes = first_post.get("likes_count", 0)
+                try:
+                    likes = int(raw_likes) # type: ignore
+                except (TypeError, ValueError):
+                    likes = 0
+
+        # 2. 課題カタログ（issue_catalog）または分析結果を取得
+        relation_res = supabase.table("issue_post_relations").select("issue_id").eq("sns_post_id", post_id).execute()
+        
+        main_c = "一般課題"
+        sub_c = "詳細分類"
+        detail_c = "個別要件"
+        summary = "要約なし"
+        sentiment = 0.0
+        priority = 50
+
+        if relation_res.data and isinstance(relation_res.data, list) and len(relation_res.data) > 0:
+            first_rel = relation_res.data[0]
+            if isinstance(first_rel, dict):
+                issue_id = first_rel.get("issue_id")
+                if issue_id is not None:
+                    catalog_res = supabase.table("issue_catalog").select("*").eq("id", issue_id).execute()
+                    if catalog_res.data and isinstance(catalog_res.data, list) and len(catalog_res.data) > 0:
+                        cat = catalog_res.data[0]
+                        if isinstance(cat, dict):
+                            main_c = str(cat.get("main_category", "一般課題"))
+                            sub_c = str(cat.get("sub_category", "詳細分類"))
+                            detail_c = str(cat.get("detail_category", "個別要件"))
+                            summary = str(cat.get("ai_summary", "要約なし"))
+
+        # 分析結果からスコア等を安全に取得
+        analysis_res = supabase.table("ai_analysis_results").select("*").eq("sns_post_id", post_id).execute()
+        if analysis_res.data and isinstance(analysis_res.data, list) and len(analysis_res.data) > 0:
+            row = analysis_res.data[0]
+            if isinstance(row, dict):
+                raw_sent = row.get("sentiment_score", 0.0)
+                try:
+                    sentiment = float(raw_sent) # type: ignore
+                except (TypeError, ValueError):
+                    sentiment = 0.0
+
+                raw_prio = row.get("priority_score", 50)
+                try:
+                    priority = int(raw_prio) # type: ignore
+                except (TypeError, ValueError):
+                    priority = 50
+
+        # 3. 投稿文をなくし、メインカテゴリー・AI要約・評価の枝だけに整理した構造
+        children = [
+            {
+                "name": main_c,
+                "children": [
+                    {"name": detail_c}
+                ]
+            },
+            {
+                "name": "AI要約",
+                "children": [
+                    {"name": summary}
+                ]
+            },
+            {
+                "name": "評価",
+                "children": [
+                    {"name": f"深刻度: {priority} / いいね: {likes}"}
+                ]
+            }
+        ]
+        
+        return {
+            "name": "要素分類",  # ルートのラベルをスッキリとした名前に変更
+            "children": children
         }
-        return tree_data
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -355,6 +438,64 @@ def get_posts():
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/api/tree/post/{post_id}")
+def get_post_tree_data(post_id: int):
+    try:
+        # 1. 投稿IDに紐づく issue_catalog のデータを取得（中間テーブル経由）
+        relation_res = supabase.table("issue_post_relations").select("issue_id").eq("sns_post_id", post_id).execute()
+        
+        if not relation_res or not relation_res.data:
+            raise HTTPException(status_code=404, detail="この投稿に対するツリーデータが見つかりません")
+        
+        relation_item = relation_res.data[0]
+        
+        # 安全な型チェックと値の取得
+        if isinstance(relation_item, dict):
+            issue_id = relation_item.get("issue_id")
+        else:
+            issue_id = getattr(relation_item, "issue_id", None)
+            
+        if not issue_id:
+            raise HTTPException(status_code=404, detail="課題IDの取得に失敗しました")
+
+        issue_res = supabase.table("issue_catalog").select("*").eq("id", issue_id).execute()
+        
+        if not issue_res or not issue_res.data:
+            raise HTTPException(status_code=404, detail="課題カタログが見つかりません")
+            
+        issue = issue_res.data[0]
+        if not issue:
+            raise HTTPException(status_code=404, detail="課題データが空です")
+
+        # 2. データベースのカテゴリ階層（大・中・小）からD3.js用のツリー構造を組み立てる
+        if isinstance(issue, dict):
+            main_cat = issue.get("main_category") or "一般課題"
+            sub_cat = issue.get("sub_category") or "その他"
+            detail_cat = issue.get("detail_category") or issue.get("ai_summary") or "詳細なし"
+        else:
+            main_cat = getattr(issue, "main_category", None) or "一般課題"
+            sub_cat = getattr(issue, "sub_category", None) or "その他"
+            detail_cat = getattr(issue, "detail_category", None) or getattr(issue, "ai_summary", None) or "詳細なし"
+
+        tree_data = {
+            "name": main_cat,
+            "children": [
+                {
+                    "name": sub_cat,
+                    "children": [
+                        {"name": detail_cat}
+                    ]
+                }
+            ]
+        }
+
+        return tree_data
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 #APIで投稿時間取得
 @app.get("/api/post-time/{original_post_id}")
 def get_specific_post_time(original_post_id: str):
@@ -374,6 +515,68 @@ def get_specific_post_time(original_post_id: str):
     except Exception as e:
         print(f"ERROR in get_specific_post_time: {e}")
         return {"collected_at": None}
+
+# --- 追加：sns_posts のデータから AI解析を再実行・一括生成するAPI ---
+@app.post("/api/run-ai-analysis")
+def run_ai_analysis_for_all_posts(background_tasks: BackgroundTasks):
+    """
+    sns_posts テーブルにある全データに対してAI解析を再度バックグラウンドで実行し、
+    ai_analysis_results や issue_catalog へデータを登録・更新する
+    """
+    def task():
+        ai_engine = get_ai_engine()
+        # ai.py 内にある既存のメソッドを呼び出して全件解析を実行
+        ai_engine.analyze_posts_from_db()
+
+    background_tasks.add_task(task)
+    return {"message": "sns_posts からのAI一括解析処理をバックグラウンドで開始しました。"}
+
+@app.get("/api/history/{history_id}")
+def get_history_detail(history_id: str, sentiment: str = "all"):
+    try:
+        response = supabase.table("chat_histories").select("*").eq("id", history_id).execute()
+        if not response.data:
+            raise HTTPException(status_code=404, detail="指定された履歴が見つかりません")
+        
+        # 確実に辞書型として扱うためのキャスト
+        raw_data = response.data[0]
+        history_data: dict = raw_data if isinstance(raw_data, dict) else {}
+        
+        # results や posts を安全に取得
+        results_obj = history_data.get("results")
+        if not results_obj or not isinstance(results_obj, dict):
+            results_obj = {}
+            
+        posts = results_obj.get("posts")
+        if not posts or not isinstance(posts, list):
+            posts = []
+        
+        # 感情に応じたフィルタリング
+        if sentiment == "positive":
+            filtered_posts = [
+                p for p in posts 
+                if isinstance(p, dict) and float(p.get("sentiment_score", 0) or 0) > 0
+            ]
+        elif sentiment == "negative":
+            filtered_posts = [
+                p for p in posts 
+                if isinstance(p, dict) and float(p.get("sentiment_score", 0) or 0) < 0
+            ]
+        else:
+            filtered_posts = posts
+            
+        query_val = history_data.get("query", "")
+        summary_val = history_data.get("summary")
+
+        return {
+            "query": query_val,
+            "results": {
+                "posts": filtered_posts
+            },
+            "summary": summary_val
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
     import uvicorn
