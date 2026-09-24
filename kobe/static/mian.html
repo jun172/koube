@@ -317,8 +317,6 @@ function renderPostsContainer(queryTitle, posts, currentTab = 'all', historyId =
                 <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
                     <div style="display: flex; gap: 6px;">
                         <button onclick="switchSentimentTab('${currentId}', 'all')" style="background: ${currentTab === 'all' ? '#8ab4f8' : '#222'}; color: ${currentTab === 'all' ? '#131314' : '#fff'}; font-weight: ${currentTab === 'all' ? 'bold' : 'normal'}; border: 1px solid ${currentTab === 'all' ? '#8ab4f8' : '#444'}; padding: 5px 10px; border-radius: 4px; font-size: 11px; cursor: pointer; transition: all 0.2s;">すべて</button>
-                        <button onclick="switchSentimentTab('${currentId}', 'positive')" style="background: ${currentTab === 'positive' ? '#8ab4f8' : '#222'}; color: ${currentTab === 'positive' ? '#131314' : '#fff'}; font-weight: ${currentTab === 'positive' ? 'bold' : 'normal'}; border: 1px solid ${currentTab === 'positive' ? '#8ab4f8' : '#444'}; padding: 5px 10px; border-radius: 4px; font-size: 11px; cursor: pointer; transition: all 0.2s;">ポジティブ</button>
-                        <button onclick="switchSentimentTab('${currentId}', 'negative')" style="background: ${currentTab === 'negative' ? '#8ab4f8' : '#222'}; color: ${currentTab === 'negative' ? '#131314' : '#fff'}; font-weight: ${currentTab === 'negative' ? 'bold' : 'normal'}; border: 1px solid ${currentTab === 'negative' ? '#8ab4f8' : '#444'}; padding: 5px 10px; border-radius: 4px; font-size: 11px; cursor: pointer; transition: all 0.2s;">ネガティブ</button>
                     </div>
                 </div>
             </div>

@@ -76,7 +76,7 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 # 1. ルート（ログイン画面など）
 @app.get("/", include_in_schema=False)
 def serve_root():
-    path = "/static/login.html"
+    path = "static/login.html"
     if not os.path.exists(path):
         return {"error": "login.html not found in static folder."}
     return FileResponse(path)
@@ -272,7 +272,6 @@ def serve_reset2():
 
 
 # --- キワードから投稿を取得 API ---
-# ai.py などからグローバルなAIエンジン、またはclientをインポートしている前提
 @app.get("/api/search")
 def search_issues(q: str = Query(..., description="検索キーワード")):
     try:
@@ -283,35 +282,37 @@ def search_issues(q: str = Query(..., description="検索キーワード")):
         
         posts = []
         if response.data:
-            # クライアントの初期化（ai.pyと同等）
-            ai_client = genai.Client()
-
             for post_info in response.data:
                 if isinstance(post_info, dict):
                     post_id = post_info.get("id")
                     text = str(post_info.get("post_text") or "")
                     
-                    # 2. 投稿文をその場でGeminiに要約させる
-                    summary_text = ""
+                    # 2. ローカルの分析エンジンで要約と感情スコアを算出（Gemini API不使用）
+                    summary_text = text[:40]
+                    sentiment_score = 0.0
+                    
                     try:
-                        prompt = f"以下の市民の投稿を一言で簡潔に要約してください。\n\n投稿: {text}"
-                        ai_res = ai_client.models.generate_content(
-                            model="gemini-3.6-flash", # または使用しているモデル名
-                            contents=prompt
-                        )
-                        summary_text = ai_res.text.strip() if ai_res and ai_res.text else text[:40]
-                    except Exception as ai_err:
-                        print(f"Gemini dynamic summary error: {ai_err}")
-                        summary_text = text[:40] + "..." # フォールバック
+                        # ai.pyなどに定義したローカルの軽量分析関数を呼び出し
+                        local_result = analyze_sentiment_and_summary(text)
+                        summary_text = local_result.get("summary", summary_text)
+                        sentiment_score = float(local_result.get("sentiment_score", 0.0))
+                    except Exception as local_err:
+                        print(f"Local NLP analysis error: {local_err}")
+
+                    # --- ★ 極端な感情表現の除外フィルター ---
+                    THRESHOLD = 0.7
+                    if abs(sentiment_score) > THRESHOLD:
+                        # スコアが極端な場合はリストに追加せずスキップ
+                        continue
+                    # ----------------------------------------
 
                     posts.append({
-                        "id": post_id,  
-                        "title": text,
-                        "summary": summary_text,  # 生成したAI要約をセット
+                        "id": post_id,
+                        "summary": summary_text,
                         "likes": post_info.get("likes_count", 0),
                         "topic_key": post_info.get("platform", "X"),
                         "collected_at": post_info.get("collected_at"),
-                        "sentiment_score": 0 
+                        "sentiment_score": sentiment_score 
                     })
                 
         history_id = str(uuid.uuid4())[:16]
@@ -339,9 +340,9 @@ def get_d3_tree_data(post_id: str, tree_type: str):
         if post_res.data and isinstance(post_res.data, list) and len(post_res.data) > 0:
             first_post = post_res.data[0]
             if isinstance(first_post, dict):
-                raw_likes = first_post.get("likes_count", 0)
                 try:
-                    likes = int(raw_likes) # type: ignore
+                    raw_likes = first_post.get("likes_count", 0)
+                    likes = int(str(raw_likes)) 
                 except (TypeError, ValueError):
                     likes = 0
 
@@ -496,25 +497,6 @@ def get_post_tree_data(post_id: int):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-#APIで投稿時間取得
-@app.get("/api/post-time/{original_post_id}")
-def get_specific_post_time(original_post_id: str):
-    try:
-        # データベース側のカラム名も 'collected_at' に変更する場合
-        response = supabase.table("post_timestamps").select("collected_at").eq("original_post_id", original_post_id).execute()
-        
-        if not response.data or len(response.data) == 0:
-            return {"collected_at": None}
-            
-        post_data = response.data[0]
-        if isinstance(post_data, dict):
-            # 返却するキー名も 'collected_at' に合わせる
-            return {"collected_at": post_data.get("collected_at")}
-            
-        return {"collected_at": None}
-    except Exception as e:
-        print(f"ERROR in get_specific_post_time: {e}")
-        return {"collected_at": None}
 
 # --- 追加：sns_posts のデータから AI解析を再実行・一括生成するAPI ---
 @app.post("/api/run-ai-analysis")
