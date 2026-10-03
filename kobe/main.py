@@ -217,15 +217,6 @@ def get_chat_histories():
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/api/history/{history_id}")
-def get_chat_history_detail(history_id: str):
-    try:
-        response = supabase.table("chat_histories").select("*").eq("id", history_id).execute()
-        if not response.data:
-            raise HTTPException(status_code=404, detail="Chat history not found.")
-        return response.data[0]
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
 
 # 5. 削除
 @app.delete("/api/history/{history_id}")

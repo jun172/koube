@@ -292,14 +292,33 @@ function renderPostsContainer(queryTitle, posts, currentTab = 'all', historyId =
                 dateStr = `<span class="date-badge"> ${dateObj.toLocaleString()}</span>`;
             }
 
+            // --- 感情スコアのバッジ生成ロジックを追加 ---
+            let sentimentBadge = '';
+            if (post.sentiment_score !== undefined && post.sentiment_score !== null) {
+                const sScore = parseFloat(post.sentiment_score);
+                let sColor = '#8ab4f8'; // 中立カラー（青系）
+                let sText = '中立';
+                
+                if (sScore > 0) {
+                    sColor = '#81c995'; // ポジティブ（緑系）
+                    sText = `ポジティブ (${sScore.toFixed(2)})`;
+                } else if (sScore < 0) {
+                    sColor = '#f28b82'; // ネガティブ（赤系）
+                    sText = `ネガティブ (${sScore.toFixed(2)})`;
+                }
+                sentimentBadge = `<span style="background: rgba(255,255,255,0.05); color: ${sColor}; border: 1px solid ${sColor}; padding: 2px 6px; border-radius: 4px; font-size: 10px;">${sText}</span>`;
+            }
+            // ------------------------------------------
+
             postsHtml += `
                 <div class="post-item">
                     <div class="post-header" onclick="toggleLogicTree(this, '${post.id}')">
                         ${displaySummary}
                         <div class="post-original"> 「${textForTags}」</div>
                         ${tagsHtml}
-                        <div class="post-footer">
-                            <span class="like-badge">❤️ ${post.likes || 0} いいね</span>
+                        <div class="post-footer" style="display: flex; gap: 10px; align-items: center; margin-top: 8px; flex-wrap: wrap;">
+                            <span class="like-badge">❤️️ ${post.likes || 0} いいね</span>
+                            ${sentimentBadge}
                             ${dateStr}
                         </div>
                     </div>
@@ -317,6 +336,8 @@ function renderPostsContainer(queryTitle, posts, currentTab = 'all', historyId =
                 <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
                     <div style="display: flex; gap: 6px;">
                         <button onclick="switchSentimentTab('${currentId}', 'all')" style="background: ${currentTab === 'all' ? '#8ab4f8' : '#222'}; color: ${currentTab === 'all' ? '#131314' : '#fff'}; font-weight: ${currentTab === 'all' ? 'bold' : 'normal'}; border: 1px solid ${currentTab === 'all' ? '#8ab4f8' : '#444'}; padding: 5px 10px; border-radius: 4px; font-size: 11px; cursor: pointer; transition: all 0.2s;">すべて</button>
+                         <button onclick="switchSentimentTab('${currentId}', 'all')" style="background: ${currentTab === 'all' ? '#8ab4f8' : '#222'}; color: ${currentTab === 'all' ? '#131314' : '#fff'}; font-weight: ${currentTab === 'all' ? 'bold' : 'normal'}; border: 1px solid ${currentTab === 'all' ? '#8ab4f8' : '#444'}; padding: 5px 10px; border-radius: 4px; font-size: 11px; cursor: pointer; transition: all 0.2s;">ポジティブ</button>
+                          <button onclick="switchSentimentTab('${currentId}', 'all')" style="background: ${currentTab === 'all' ? '#8ab4f8' : '#222'}; color: ${currentTab === 'all' ? '#131314' : '#fff'}; font-weight: ${currentTab === 'all' ? 'bold' : 'normal'}; border: 1px solid ${currentTab === 'all' ? '#8ab4f8' : '#444'}; padding: 5px 10px; border-radius: 4px; font-size: 11px; cursor: pointer; transition: all 0.2s;">ネガティブ</button>
                     </div>
                 </div>
             </div>
