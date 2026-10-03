@@ -253,7 +253,34 @@ class AnalysisEngine:
 
         except Exception as e:
             print(f"Meta Analysis Error: {e}")
-        
+    
+def analyze_sentiment_and_summary(text: str) -> dict:
+    """
+    検索時のテキストに対して、軽量に要約と感情スコアを算出する関数
+    """
+    summary = text[:40] + ("..." if len(text) > 40 else "")
+    
+    sentiment_score = 0.0
+    positive_words = ["良い", "最高", "改善", "嬉しい", "便利"]
+    negative_words = ["最悪", "不満", "混雑", "汚い", "ダメ", "困る"]
+    
+    for word in positive_words:
+        if word in text:
+            sentiment_score += 0.3
+            break
+            
+    for word in negative_words:
+        if word in text:
+            sentiment_score -= 0.3
+            break
+            
+    sentiment_score = max(-1.0, min(1.0, sentiment_score))
+    
+    return {
+        "summary": summary,
+        "sentiment_score": sentiment_score
+    }
+
 # 実行用ブロック
 if __name__ == "__main__":
     engine = get_ai_engine()

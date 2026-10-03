@@ -24,7 +24,8 @@
             <button class="new-chat-btn" onclick="startNewChat()">
                 キーワード分析に戻る  
             </button>
-
+            <button class="new-chat-btn" onclick="triggerXCollection()" style="background: #2b3a4a; margin-top: 10px;">Xから最新データを収集・AI解析</button>
+            <button class="new-chat-btn" onclick="triggerAiAnalysis()" style="background: #3c4043; margin-top: 8px;"> AI一括解析を実行（ai.py）</button>
             <div id="history-list">
                 <h3>検索履歴</h3>
             </div>
@@ -124,7 +125,33 @@ function renderTags() {
     html += `<button class="add-tag-btn" onclick="showAddTagInput()">+ 追加</button>`;
     container.innerHTML = html;
 }
+async function triggerXCollection() {
+    // 現在登録されているカスタムタグのキーワードをまとめて送信する例
+    if (!customTags || customTags.length === 0) {
+        alert("収集するキーワードがありません。");
+        return;
+    }
 
+    if (!confirm(`以下のキーワードでXデータの収集・AI解析を開始しますか？\n[${customTags.join(', ')}]`)) {
+        return;
+    }
+
+    try {
+        const response = await fetch(`${API_BASE_URL}/api/collect`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ keywords: customTags })
+        });
+        
+        if (!response.ok) throw new Error("APIの呼び出しに失敗しました");
+        
+        const data = await response.json();
+        alert("バックグラウンドでXデータ収集とAI解析を開始しました！しばらく待ってから再読み込みしてください。");
+    } catch (error) {
+        console.error("収集エラー:", error);
+        alert("データの収集開始に失敗しました。");
+    }
+}
 function showAddTagInput() {
     const container = document.getElementById('tagContainer');
     if (!container) return;
@@ -148,7 +175,25 @@ function showAddTagInput() {
     const input = document.getElementById('newTagInput');
     if (input) input.focus();
 }
+async function triggerAiAnalysis() {
+    if (!confirm("データベース内の全投稿に対してAI解析（ai.py）を再実行しますか？")) {
+        return;
+    }
 
+    try {
+        const response = await fetch(`${API_BASE_URL}/api/run-ai-analysis`, {
+            method: 'POST'
+        });
+        
+        if (!response.ok) throw new Error("AI解析の起動に失敗しました");
+        
+        const data = await response.json();
+        alert(data.message || "AI一括解析のバックグラウンド処理を開始しました！");
+    } catch (error) {
+        console.error("AI解析エラー:", error);
+        alert("AI解析の起動に失敗しました。サーバーのログを確認してください。");
+    }
+}
 function confirmAddTag() {
     const input = document.getElementById('newTagInput');
     if (!input) return;
