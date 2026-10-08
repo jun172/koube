@@ -1,0 +1,4 @@
+name = "koube"
+main = "main.py"
+compatibility_date = "2024-03-20" # または現在の日付
+compatibility_flags = ["python_workers"]

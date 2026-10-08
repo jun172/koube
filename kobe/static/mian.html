@@ -187,7 +187,6 @@
                     <p class="welcome-subtitle">分析したいキーワードやハッシュタグを入力してください</p>
                 </div>
             </div>
-
             <!-- 下部入力エリア -->
             <div class="bottom-input-section">
                 <!-- 動的にキーワードを表示・追加・削除するコンテナ -->
@@ -402,14 +401,14 @@ async function fetchAndRenderHistories() {
                         <span onclick="selectHistory('${item.id}')">
                             ${item.query}
                         </span>
-                        <button onclick="deleteHistory(event, '${item.id}')" style="background: none; border: none; border-radius: 6px; cursor: pointer; color: #aaa; padding: 4px 6px; display: flex; align-items: center; transition: background 0.2s, color 0.2s;" title="削除">
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                                <path d="M4 7H20" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-                                <path d="M6 7L7 20C7 20.5523 7.44772 21 8 21H16C16.5523 21 17 20.5523 17 20L18 7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                                <path d="M9 7V4C9 3.44772 9.44772 3 10 3H14C14.5523 3 15 3.44772 15 4V7" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-                                <path d="M10 11V17" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-                                <path d="M14 11V17" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-                            </svg>
+                        <button onclick="deleteHistory(event, '${item.id}')" style="background: none; border: none; border-radius: 6px; cursor: pointer; color: #aaa; padding: 4px 6px; display: flex; align-items: center; transition: background 0.2s, color 0.2s;" onmouseover="this.style.background='rgba(239, 68, 68, 0.2)'; this.style.color='#ef4444';" onmouseout="this.style.background='none'; this.style.color='#aaa';" title="削除">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M4 7H20" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                        <path d="M6 7L7 20C7 20.5523 7.44772 21 8 21H16C16.5523 21 17 20.5523 17 20L18 7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                        <path d="M9 7V4C9 3.44772 9.44772 3 10 3H14C14.5523 3 15 3.44772 15 4V7" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                        <path d="M10 11V17" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                        <path d="M14 11V17" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                        </svg>
                         </button>
                     </div>
                 `;
@@ -485,7 +484,7 @@ function renderPostsContainer(queryTitle, posts, currentTab = 'all', historyId =
                 dateStr = `<span class="date-badge"> ${dateObj.toLocaleString()}</span>`;
             }
 
-            // --- 感情スコアのバッジ生成ロジックを追加 ---
+            // 感情スコアのバッジ生成ロジック
             let sentimentBadge = '';
             if (post.sentiment_score !== undefined && post.sentiment_score !== null) {
                 const sScore = parseFloat(post.sentiment_score);
@@ -501,7 +500,6 @@ function renderPostsContainer(queryTitle, posts, currentTab = 'all', historyId =
                 }
                 sentimentBadge = `<span style="background: rgba(255,255,255,0.05); color: ${sColor}; border: 1px solid ${sColor}; padding: 2px 6px; border-radius: 4px; font-size: 10px;">${sText}</span>`;
             }
-            // ------------------------------------------
 
             postsHtml += `
                 <div class="post-item">
@@ -510,7 +508,7 @@ function renderPostsContainer(queryTitle, posts, currentTab = 'all', historyId =
                         <div class="post-original"> 「${textForTags}」</div>
                         ${tagsHtml}
                         <div class="post-footer" style="display: flex; gap: 10px; align-items: center; margin-top: 8px; flex-wrap: wrap;">
-                            <span class="like-badge">❤️️ ${post.likes || 0} いいね</span>
+                            <span class="like-badge">❤ ${post.likes || 0} いいね</span>
                             ${sentimentBadge}
                             ${dateStr}
                         </div>
@@ -524,21 +522,35 @@ function renderPostsContainer(queryTitle, posts, currentTab = 'all', historyId =
 
     displayArea.innerHTML = `
         <div class="analysis-card" style="width: 100%; box-sizing: border-box;">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; flex-wrap: wrap; gap: 8px;">
-                <h4 style="margin: 0; word-break: break-all;">検索結果: ${queryTitle}</h4>
-                <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
-                    <div style="display: flex; gap: 6px;">
-                        <button onclick="switchSentimentTab('${currentId}', 'all')" style="background: ${currentTab === 'all' ? '#8ab4f8' : '#222'}; color: ${currentTab === 'all' ? '#131314' : '#fff'}; font-weight: ${currentTab === 'all' ? 'bold' : 'normal'}; border: 1px solid ${currentTab === 'all' ? '#8ab4f8' : '#444'}; padding: 5px 10px; border-radius: 4px; font-size: 11px; cursor: pointer; transition: all 0.2s;">すべて</button>
-                         <button onclick="switchSentimentTab('${currentId}', 'all')" style="background: ${currentTab === 'all' ? '#8ab4f8' : '#222'}; color: ${currentTab === 'all' ? '#131314' : '#fff'}; font-weight: ${currentTab === 'all' ? 'bold' : 'normal'}; border: 1px solid ${currentTab === 'all' ? '#8ab4f8' : '#444'}; padding: 5px 10px; border-radius: 4px; font-size: 11px; cursor: pointer; transition: all 0.2s;">ポジティブ</button>
-                          <button onclick="switchSentimentTab('${currentId}', 'all')" style="background: ${currentTab === 'all' ? '#8ab4f8' : '#222'}; color: ${currentTab === 'all' ? '#131314' : '#fff'}; font-weight: ${currentTab === 'all' ? 'bold' : 'normal'}; border: 1px solid ${currentTab === 'all' ? '#8ab4f8' : '#444'}; padding: 5px 10px; border-radius: 4px; font-size: 11px; cursor: pointer; transition: all 0.2s;">ネガティブ</button>
-                    </div>
-                </div>
-            </div>
+        <div style="display: flex; gap: 6px;">
+    <button onclick="switchSentimentTab('${currentId}', 'all')" 
+        style="background: ${currentTab === 'all' ? '#8ab4f8' : '#222'}; color: ${currentTab === 'all' ? '#131314' : '#fff'}; font-weight: ${currentTab === 'all' ? 'bold' : 'normal'}; border: 1px solid ${currentTab === 'all' ? '#8ab4f8' : '#444'}; padding: 5px 10px; border-radius: 4px; font-size: 11px; cursor: pointer; transition: all 0.2s;"
+        onmouseover="if('${currentTab}' !== 'all') { this.style.background='#333'; this.style.borderColor='#666'; }"
+        onmouseout="if('${currentTab}' !== 'all') { this.style.background='#222'; this.style.borderColor='#444'; }"
+    >すべて</button>
+
+    <button onclick="switchSentimentTab('${currentId}', 'positive')" 
+        style="background: ${currentTab === 'positive' ? '#8ab4f8' : '#222'}; color: ${currentTab === 'positive' ? '#131314' : '#fff'}; font-weight: ${currentTab === 'positive' ? 'bold' : 'normal'}; border: 1px solid ${currentTab === 'positive' ? '#8ab4f8' : '#444'}; padding: 5px 10px; border-radius: 4px; font-size: 11px; cursor: pointer; transition: all 0.2s;"
+        onmouseover="if('${currentTab}' !== 'positive') { this.style.background='#333'; this.style.borderColor='#666'; }"
+        onmouseout="if('${currentTab}' !== 'positive') { this.style.background='#222'; this.style.borderColor='#444'; }"
+    >ポジティブ</button>
+
+    <button onclick="switchSentimentTab('${currentId}', 'neutral')" 
+        style="background: ${currentTab === 'neutral' ? '#8ab4f8' : '#222'}; color: ${currentTab === 'neutral' ? '#131314' : '#fff'}; font-weight: ${currentTab === 'neutral' ? 'bold' : 'normal'}; border: 1px solid ${currentTab === 'neutral' ? '#8ab4f8' : '#444'}; padding: 5px 10px; border-radius: 4px; font-size: 11px; cursor: pointer; transition: all 0.2s;"
+        onmouseover="if('${currentTab}' !== 'neutral') { this.style.background='#333'; this.style.borderColor='#666'; }"
+        onmouseout="if('${currentTab}' !== 'neutral') { this.style.background='#222'; this.style.borderColor='#444'; }"
+    >中立</button>
+
+    <button onclick="switchSentimentTab('${currentId}', 'negative')" 
+        style="background: ${currentTab === 'negative' ? '#8ab4f8' : '#222'}; color: ${currentTab === 'negative' ? '#131314' : '#fff'}; font-weight: ${currentTab === 'negative' ? 'bold' : 'normal'}; border: 1px solid ${currentTab === 'negative' ? '#8ab4f8' : '#444'}; padding: 5px 10px; border-radius: 4px; font-size: 11px; cursor: pointer; transition: all 0.2s;"
+        onmouseover="if('${currentTab}' !== 'negative') { this.style.background='#333'; this.style.borderColor='#666'; }"
+        onmouseout="if('${currentTab}' !== 'negative') { this.style.background='#222'; this.style.borderColor='#444'; }"
+    >ネガティブ</button>
+</div>
             ${postsHtml}
         </div>
     `;
 }
-
 function getCurrentHistoryId() {
     const pathParts = window.location.pathname.split('/').filter(Boolean);
     const appIndex = pathParts.indexOf('app');

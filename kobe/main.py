@@ -1,4 +1,5 @@
 import os
+import resend
 from fastapi import FastAPI, BackgroundTasks, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -8,12 +9,11 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, HTMLResponse
 from datetime import datetime, timezone
 import uuid
-
 # 自作モジュール
 from ai import *
 from database import *
 from x import *
-
+from workers import asgi
 
 app = FastAPI(
     title="Unmute City Backend",
@@ -33,6 +33,7 @@ app.add_middleware(
 # 各種クライアントの初期化
 supabase: Client = get_supabase_client()
 x_client = XPostClient()  
+RESEND_FROM = os.environ.get("RESEND_FROM_EMAIL", "onboarding@resend.dev")
 
 class CollectionRequest(BaseModel):
     keywords: List[str]
@@ -66,7 +67,7 @@ class PasswordResetSchema(BaseModel):
 
 class PasswordResetRequestSchema(BaseModel):
     email: str
-    
+
 # --- 静的ファイル・フロントエンド配信設定 ---
 
 os.makedirs("static", exist_ok=True)
@@ -111,37 +112,60 @@ def login(user: UserSchema):
 
 # パスワードを忘れた場合の上書きAPI
 @app.put("/api/users/password-reset")
-def reset_password(data: PasswordResetSchema):
+def reset_password(date:PasswordResetSchema):
     try:
-        users_response = supabase.auth.admin.list_users()
-        target_user = next((u for u in users_response if u.email == data.email), None)
+        users_response=supabase.auth.admin.list_users()
+        target_user =next((u for u in users_response if u.email == date.email),None)
         
         if not target_user:
-            raise HTTPException(status_code=404, detail="該当するユーザーが見つかりません")
-            
+            raise HTTPException(status_code=404,detail="該当するユーザがいません")
+        
         response = supabase.auth.admin.update_user_by_id(
             target_user.id,
-            {"password": data.new_password}
+            {"password": date.new_password}
         )
-        return {"message": "パスワードが正常に上書きされました", "data": response}
+        return{"message":"パスワードが正常に上書きされました","date":response}
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400,detail=str(e))
 
 
 # パスワードリセットメールの送信（Supabase自動処理）
 @app.post("/api/forgot-password")
 def forgot_password(data: PasswordResetRequestSchema):
     try:
-        response = supabase.auth.reset_password_for_email(
-            data.email,
-            options={
-                "redirect_to": "http://localhost:8000/reset2.html"
-            }
-        )
-        return {"message": "パスワード再設定メールを送信しました", "data": response}
+        users_response = supabase.auth.admin.list_users()
+        target_user = next((u for u in users_response if u.email == data.email),None)
+        if not target_user:
+            raise HTTPException(status_code=404, detail="登録されていないメールアドレスです")
+        reset_link = f"http://localhost:8000/reset2.html"
+        
+        params = {
+            "from": RESEND_FROM,
+            "to": [data.email],
+            "subject": "【神戸市SNS分析ダッシュボード】パスワード再設定のご案内",
+            "html": f"""
+                <div style="font-family: sans-serif; color: #333; padding: 20px; max-width: 600px; margin: 0 auto;">
+                    <h2 style="color: #1a73e8;">パスワード再設定のご案内</h2>
+                    <p>神戸市SNS分析ダッシュボードをご利用いただきありがとうございます。</p>
+                    <p>パスワード再設定のリクエストを受け付けました。以下のボタンをクリックして、新しいパスワードを設定してください。</p>
+                    <p style="margin: 30px 0; text-align: center;">
+                        <a href="{reset_link}" style="background-color: #1a73e8; color: #ffffff; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: bold; display: inline-block;">
+                            パスワードを再設定する
+                        </a>
+                    </p>
+                    <p style="font-size: 14px; color: #555;">ボタンが機能しない場合は、以下のURLをブラウザに貼り付けてください：<br><a href="{reset_link}" style="color: #1a73e8;">{reset_link}</a></p>
+                    <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;">
+                    <p style="font-size: 12px; color: #888;">心当たりがない場合は、このメールを無視していただいて問題ありません。</p>
+                </div>
+            """
+        }
+        email_response = resend.Emails.send(params)# type: ignore
+        return {"message": "パスワード再設定メールを送信しました", "resend_data": email_response}
+        
+    except HTTPException as he:
+        raise he
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
-
 # 1. SNSデータ収集 & AI解析トリガーAPI (バックグラウンド実行)
 @app.post("/api/collect")
 async def trigger_collection(request: CollectionRequest, background_tasks: BackgroundTasks):
@@ -523,7 +547,7 @@ def get_history_detail(history_id: str, sentiment: str = "all"):
         if not posts or not isinstance(posts, list):
             posts = []
         
-        # 感情に応じたフィルタリング
+    # 感情に応じたフィルタリング
         if sentiment == "positive":
             filtered_posts = [
                 p for p in posts 
@@ -533,6 +557,11 @@ def get_history_detail(history_id: str, sentiment: str = "all"):
             filtered_posts = [
                 p for p in posts 
                 if isinstance(p, dict) and float(p.get("sentiment_score", 0) or 0) < 0
+            ]
+        elif sentiment == "neutral":
+            filtered_posts = [
+                p for p in posts 
+                if isinstance(p, dict) and float(p.get("sentiment_score", 0) or 0) == 0
             ]
         else:
             filtered_posts = posts
@@ -550,6 +579,7 @@ def get_history_detail(history_id: str, sentiment: str = "all"):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+default = asgi.entrypoint(app)
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
