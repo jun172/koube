@@ -13,7 +13,7 @@ import uuid
 from ai import *
 from database import *
 from x import *
-from workers import asgi
+
 
 app = FastAPI(
     title="Unmute City Backend",
@@ -579,7 +579,6 @@ def get_history_detail(history_id: str, sentiment: str = "all"):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-default = asgi.entrypoint(app)
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
