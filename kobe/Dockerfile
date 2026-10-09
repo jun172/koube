@@ -13,5 +13,4 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # ポートを指定してUvicornで起動
-# ※エントリーポイントとなるファイル名に合わせて "main:app" の部分を変更してください
-CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port $PORT"]
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "${PORT:-8080}"]

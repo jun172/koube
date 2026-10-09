@@ -137,7 +137,7 @@ def forgot_password(data: PasswordResetRequestSchema):
         target_user = next((u for u in users_response if u.email == data.email),None)
         if not target_user:
             raise HTTPException(status_code=404, detail="登録されていないメールアドレスです")
-        reset_link = f"http://localhost:8000/reset2.html"
+        reset_link =f"https://koube-production.up.railway.app/reset2.html"
         
         params = {
             "from": RESEND_FROM,
