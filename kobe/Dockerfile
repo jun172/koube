@@ -14,4 +14,4 @@ COPY . .
 
 # ポートを指定してUvicornで起動
 # ※エントリーポイントとなるファイル名に合わせて "main:app" の部分を変更してください
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080"]
+CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port $PORT"]
