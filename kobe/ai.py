@@ -4,6 +4,7 @@ from typing import Dict, Any, Optional
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types
+from google.cloud import language_v1
 
 from sklearn.preprocessing import MinMaxScaler
 import numpy as np
@@ -14,8 +15,8 @@ from database import *
 # .env ファイルから環境変数を読み込む
 load_dotenv()
 
-# クライアントの初期化
-client = genai.Client()
+# Gemini クライアントの初期化
+gemini_client = genai.Client()
 
 _engine = None
 
@@ -29,11 +30,12 @@ class AnalysisEngine:
     def __init__(self):
         self.supabase = get_supabase_client()
         self.scaler = MinMaxScaler(feature_range=(0, 1))
+        # Cloud Natural Language API クライアントの初期化
+        self.nl_client = language_v1.LanguageServiceClient()
 
     def _calculate_priority_with_ml(self, ai_base_priority: int, likes: int, replies: int, impressions: int) -> int:
         """
-        scikit-learnの処理概念や特徴量スケーリングを応用し、
-        AIが算出した深刻度とエンゲージメント指標を統合して優先度を算出する。
+        scikit-learnの処理概念を応用し、AIが算出した深刻度とエンゲージメント指標を統合して優先度を算出する。
         """
         raw_features = np.array([[float(likes), float(replies), float(impressions)]])
         weights = np.array([0.4, 0.4, 0.2])
@@ -44,11 +46,25 @@ class AnalysisEngine:
         total_score = int((ai_base_priority * 0.7) + engagement_boost)
         return max(0, min(100, total_score))
 
-    def generate_analysis(self, post_id: Any, text: str, like_count: int, reply_count: int = 0, impressions: int = 0):
+    def generate_analysis(self, post_id: Any, text: str, like_count: int, reply_count: int = 0, impressions: int = 0) -> bool:
         """
-        1件のSNS投稿をGeminiで要約・分析し、エンゲージメント指標を統合してDBへ保存する
+        【適材適所】
+        - 感情スコア算出: Cloud Natural Language API (高精度な感情解析)
+        - 要約・ロジックツリー構造化: Gemini API (柔軟なJSON生成・要素分解)
+        成功した場合は True、API制限などのエラーで失敗した場合は False を返す。
         """
         try:
+            document = language_v1.Document(
+                content=text,
+                type_=language_v1.Document.Type.PLAIN_TEXT,
+                language="ja"
+            )
+
+            # 1. 【Natural Language API】正確な感情スコアの取得 (-1.0 ~ 1.0)
+            sentiment_response = self.nl_client.analyze_sentiment(request={"document": document})
+            sentiment_score = float(sentiment_response.document_sentiment.score)
+
+            # 2. 【Gemini API】「What（何が起きているか）」の要素分解とJSONツリーの生成
             prompt = f"""
             以下の市民の投稿を「What（何が起きているか）」に絞って要素分解し、JSON形式のみで返してください（解説やマークダウンは不要）。
 
@@ -56,13 +72,12 @@ class AnalysisEngine:
 
             要件:
             1. ai_summary: 30〜50文字程度の要約
-            2. sentiment_score: -1.0〜1.0の感情スコア
-            3. what_tree: 「対象」「問題」「影響」の階層を持つJSONオブジェクト（name と children）
-            4. base_priority: 0〜100の深刻度
-            5. tags: キーワードのリスト（2〜4個）
+            2. what_tree: 「対象」「問題」「影響」の階層を持つJSONオブジェクト（name と children）
+            3. base_priority: 0〜100の深刻度
+            4. tags: キーワードのリスト（2〜4個）
             """
             
-            response = client.models.generate_content(
+            gemini_response = gemini_client.models.generate_content(
                 model="gemini-3.6-flash",
                 contents=prompt,
                 config=types.GenerateContentConfig(
@@ -70,11 +85,10 @@ class AnalysisEngine:
                 )
             )
             
-            response_text = response.text if response.text else "{}"
+            response_text = gemini_response.text if gemini_response.text else "{}"
             data = json.loads(response_text)
             post_summary = data.get("ai_summary", text[:50])
-
-            base_priority = data.get("base_priority", data.get("priority_score", 50))
+            base_priority = data.get("base_priority", 50)
             
             final_priority = self._calculate_priority_with_ml(
                 ai_base_priority=base_priority,
@@ -83,16 +97,16 @@ class AnalysisEngine:
                 impressions=impressions
             )
 
-            # 1. ai_analysis_results テーブルへ保存
+            # 3. ai_analysis_results テーブルへ保存
             analysis_data = {
                 "sns_post_id": post_id,
                 "is_valid_issue": True,
-                "sentiment_score": data.get("sentiment_score", 0.0),
+                "sentiment_score": sentiment_score,
                 "priority_score": final_priority
             }
             insert_ai_analysis(analysis_data)
 
-            # 2. 課題カタログ（issue_catalog）および中間テーブルへの保存
+            # 4. 課題カタログ（issue_catalog）および中間テーブルへの保存
             self._save_to_catalog(
                 post_id=post_id, 
                 tree_data=data.get("what_tree", {}), 
@@ -100,10 +114,18 @@ class AnalysisEngine:
                 summary_text=post_summary
             )
             
-            print(f"Post ID: {post_id} のAI分析とMLエンゲージメント補正（優先度: {final_priority}）の保存が完了しました。")
+            print(f"Post ID: {post_id} の統合分析（NLP感情分析 + Gemini構造化）と優先度({final_priority})の保存が完了しました。")
+            return True
 
         except Exception as e:
-            print(f"AI Analysis Error (Post ID: {post_id}): {e}")
+            err_msg = str(e).lower()
+            # APIのクォータ超過・レートリミット（429エラーなど）の検知
+            if "quota" in err_msg or "rate limit" in err_msg or "429" in err_msg or "resourceexhausted" in err_msg:
+                print(f"【API制限エラー】APIが足りません（上限に達しました）。これ以上の処理を中断します。詳細: {e}")
+                return False
+            else:
+                print(f"Analysis Error (Post ID: {post_id}): {e}")
+                return True # 通常のエラーの場合は次の投稿へ継続
 
     def _save_to_catalog(self, post_id: Any, tree_data: Dict[str, Any], priority: int, summary_text: str):
         try:
@@ -142,9 +164,19 @@ class AnalysisEngine:
 
     def analyze_posts_from_db(self):
         """
-        sns_posts テーブルからデータを直接参照し、AI分析を実行するメソッド
+        sns_posts テーブルからまだAI分析が行われていない新しい投稿のみを抽出し、統合分析を実行する。
+        API制限に達した場合はその場で安全に処理を中断する。
         """
         try:
+            # 1. 既に分析済みの投稿IDリストを取得する（strを経由して安全にintにキャスト）
+            analyzed_res = self.supabase.table("ai_analysis_results").select("sns_post_id").execute()
+            analyzed_post_ids = {
+                int(str(row["sns_post_id"])) 
+                for row in (analyzed_res.data or []) 
+                if isinstance(row, dict) and row.get("sns_post_id") is not None
+            }
+
+            # 2. sns_posts から全件取得
             response = self.supabase.table("sns_posts").select("*").execute()
             posts = response.data
 
@@ -152,30 +184,39 @@ class AnalysisEngine:
                 print("sns_posts にデータがありません。")
                 return
 
-            for post in posts:
-                # post が辞書型であることを安全に確認
-                if not isinstance(post, dict):
-                    continue
+            # 3. 未処理（まだ分析結果がない）の投稿のみに絞り込む（strを経由して安全にintにキャスト）
+            unprocessed_posts = [
+                post for post in posts 
+                if isinstance(post, dict) and int(str(post.get("id"))) not in analyzed_post_ids
+            ]
 
+            if not unprocessed_posts:
+                print("新しく分析すべき未処理の投稿はありません。")
+                return
+
+            print(f"未処理の新規投稿 {len(unprocessed_posts)} 件の統合分析を開始します...")
+
+            for post in unprocessed_posts:
                 post_id = post.get("id")
                 text = str(post.get("post_text") or "")
                 
-                # 安全に数値化
+                # 型安全な数値化
                 try:
-                    likes = int(post.get("likes_count", 0) or 0) # type: ignore
+                    raw_likes = post.get("likes_count", 0)
+                    likes = int(str(raw_likes)) if raw_likes is not None else 0
                 except (TypeError, ValueError):
                     likes = 0
 
                 try:
-                    replies = int(post.get("replies_count", 0) or 0) # type: ignore
+                    raw_replies = post.get("replies_count", 0)
+                    replies = int(str(raw_replies)) if raw_replies is not None else 0
                 except (TypeError, ValueError):
                     replies = 0
                 
-                # ★ ここにあった「既存チェック (existing)」の処理を削除しました
+                print(f"Post ID: {post_id} の統合分析を実行中...")
                 
-                print(f"Post ID: {post_id} のAI分析を開始します...")
-                
-                self.generate_analysis(
+                # 実行結果を受け取る（API制限で失敗した場合は False が返り、ループを中断）
+                success = self.generate_analysis(
                     post_id=post_id,
                     text=text,
                     like_count=likes,
@@ -183,16 +224,21 @@ class AnalysisEngine:
                     impressions=0
                 )
 
+                if not success:
+                    print("【中断】API制限に達したため、残りの投稿の処理をストップします。")
+                    break
+
+            print("処理を終了しました。")
+
         except Exception as e:
             print(f"DB Fetch & Analysis Error: {e}")
 
     def analyze_issue_catalog_aggregation(self):
         """
-        issue_catalog に集まった課題や関連する複数の投稿をグループごとに集約し、
-        さらに深いレベルの「都市全体の構造的課題・原因」をGeminiにメタ解析させる
+        【Gemini APIの得意分野】
+        複数投稿を横断的にメタ解析し、構造的要因や政策提言を文章生成する
         """
         try:
-            # 1. カタログに登録されている課題をすべて取得
             response = self.supabase.table("issue_catalog").select("*").execute()
             catalogs = response.data
 
@@ -211,7 +257,6 @@ class AnalysisEngine:
 
                 print(f"カテゴリ [{main_cat} / {sub_cat}] のメタ解析を実行中...")
 
-                # 2. この課題に紐づくすべてのSNS投稿テキストを集める
                 relations = self.supabase.table("issue_post_relations").select("sns_post_id").eq("issue_id", issue_id).execute()
                 post_ids = [r["sns_post_id"] for r in relations.data if isinstance(r, dict) and "sns_post_id" in r]
 
@@ -220,14 +265,14 @@ class AnalysisEngine:
                     posts_res = self.supabase.table("sns_posts").select("post_text").in_("id", post_ids).execute()
                     collected_texts = [p["post_text"] for p in posts_res.data if isinstance(p, dict) and "post_text" in p]
 
-                # 3. まとめたテキストを元に、Geminiに「さらに深い上位の要素分解（なぜなぜ分析・構造的要因）」を指示する
                 meta_prompt = f"""
                 以下は、市民から寄せられた「{main_cat}（{sub_cat}）」に関する複数の具体的な不満・意見です。
                 これらの声をメタ解析（横断的分析）し、行政として取り組むべき「根本的な構造的要因」や「政策的背景」を深く要素分解してください。
                 
                 集約された意見・要約:
                 - {summary}
-                - デバッグ用生データ抜粋: {json.dumps(collected_texts[:5], ensure_ascii=False)}
+                - デバッグ用生データ抜粋: 
+                {json.dumps(collected_texts[:5], ensure_ascii=False)}
                 
                 要件（必ずJSON形式のみで返してください）:
                 1. structural_cause: この問題を引き起こしている根本的な制度的・構造的原因の要約（40〜60文字）
@@ -235,7 +280,7 @@ class AnalysisEngine:
                 3. deeper_tree: さらに詳細な原因・影響・対策に分かれるロジックツリー構造 (name, children)
                 """
 
-                response = client.models.generate_content(
+                gemini_response = gemini_client.models.generate_content(
                     model="gemini-3.6-flash",
                     contents=meta_prompt,
                     config=types.GenerateContentConfig(
@@ -243,10 +288,9 @@ class AnalysisEngine:
                     )
                 )
                 
-                meta_data = json.loads(response.text if response.text else "{}")
+                meta_data = json.loads(gemini_response.text if gemini_response.text else "{}")
                 print(f"メタ解析完了: {meta_data.get('structural_cause')}")
 
-                # 必要であれば、解析結果を issue_catalog の新しいカラム（例: structural_cause など）に保存・アップデートする
                 self.supabase.table("issue_catalog").update({
                     "ai_summary": f"【構造的要因】{meta_data.get('structural_cause', summary)}"
                 }).eq("id", issue_id).execute()
@@ -256,25 +300,22 @@ class AnalysisEngine:
     
 def analyze_sentiment_and_summary(text: str) -> dict:
     """
-    検索時のテキストに対して、軽量に要約と感情スコアを算出する関数
+    検索時などの軽量処理: Cloud Natural Language APIで感情スコアを取得しつつ、簡易要約を返す
     """
     summary = text[:40] + ("..." if len(text) > 40 else "")
-    
     sentiment_score = 0.0
-    positive_words = ["良い", "最高", "改善", "嬉しい", "便利"]
-    negative_words = ["最悪", "不満", "混雑", "汚い", "ダメ", "困る"]
     
-    for word in positive_words:
-        if word in text:
-            sentiment_score += 0.3
-            break
-            
-    for word in negative_words:
-        if word in text:
-            sentiment_score -= 0.3
-            break
-            
-    sentiment_score = max(-1.0, min(1.0, sentiment_score))
+    try:
+        client = language_v1.LanguageServiceClient()
+        document = language_v1.Document(
+            content=text,
+            type_=language_v1.Document.Type.PLAIN_TEXT,
+            language="ja"
+        )
+        sentiment_response = client.analyze_sentiment(request={"document": document})
+        sentiment_score = float(sentiment_response.document_sentiment.score)
+    except Exception as e:
+        print(f"NLP sentiment analysis error: {e}")
     
     return {
         "summary": summary,

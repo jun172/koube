@@ -7,3 +7,4 @@ google-genai
 scikit-learn
 numpy
 requests
+google-cloud-language
