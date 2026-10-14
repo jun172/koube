@@ -14,6 +14,8 @@ from ai import *
 from database import *
 from x import *
 
+# main.py の適切な場所（API定義部分など）に以下を追加・修正します
+from stop_flag import request_stop_ai, request_stop_x
 
 app = FastAPI(
     title="Unmute City Backend",
@@ -283,42 +285,57 @@ def serve_app_history_dashboard(history_id: str):
 @app.get("/reset2.html", include_in_schema=False)
 def serve_reset2():
     return FileResponse("static/reset2.html")
-
-
-# --- キワードから投稿を取得 API ---
+# --- キーワードから投稿を取得 API ---
 @app.get("/api/search")
 def search_issues(q: str = Query(..., description="検索キーワード")):
     try:
-        # 1. キーワードにヒットする sns_posts を取得
         response = supabase.table("sns_posts").select(
             "id, platform, post_text, likes_count, collected_at"
-        ).ilike("post_text", f"%{q}%").execute()
+        ).ilike("post_text", f"%{q}%").order("collected_at", desc=True).execute()
         
         posts = []
-        if response.data:
+        if response.data and isinstance(response.data, list):
             for post_info in response.data:
                 if isinstance(post_info, dict):
                     post_id = post_info.get("id")
                     text = str(post_info.get("post_text") or "")
                     
-                    # 2. ローカルの分析エンジンで要約と感情スコアを算出（Gemini API不使用）
-                    summary_text = text[:40]
-                    sentiment_score = 0.0
+                    # デフォルトの要約（原文の先頭）
+                    summary_text = text[:40] + ("..." if len(text) > 40 else "")
                     
                     try:
-                        # ai.pyなどに定義したローカルの軽量分析関数を呼び出し
-                        local_result = analyze_sentiment_and_summary(text)
-                        summary_text = local_result.get("summary", summary_text)
-                        sentiment_score = float(local_result.get("sentiment_score", 0.0))
-                    except Exception as local_err:
-                        print(f"Local NLP analysis error: {local_err}")
+                        relation_res = supabase.table("issue_post_relations").select("issue_id").eq("sns_post_id", post_id).execute()
+                        if relation_res.data and isinstance(relation_res.data, list) and len(relation_res.data) > 0:
+                            first_rel = relation_res.data[0]
+                            if isinstance(first_rel, dict):
+                                issue_id = first_rel.get("issue_id")
+                                if issue_id is not None:
+                                    catalog_res = supabase.table("issue_catalog").select("ai_summary").eq("id", issue_id).execute()
+                                    if catalog_res.data and isinstance(catalog_res.data, list) and len(catalog_res.data) > 0:
+                                        first_cat = catalog_res.data[0]
+                                        if isinstance(first_cat, dict):
+                                            ai_sum = first_cat.get("ai_summary")
+                                            if ai_sum:
+                                                summary_text = str(ai_sum)
+                    except Exception as sum_err:
+                        print(f"Summary fetch error: {sum_err}")
 
-                    # --- ★ 極端な感情表現の除外フィルター ---
+                    # 感情スコアの取得
+                    sentiment_score = 0.0
+                    try:
+                        analysis_res = supabase.table("ai_analysis_results").select("sentiment_score").eq("sns_post_id", post_id).execute()
+                        if analysis_res.data and isinstance(analysis_res.data, list) and len(analysis_res.data) > 0:
+                            first_ana = analysis_res.data[0]
+                            if isinstance(first_ana, dict):
+                                raw_sent = first_ana.get("sentiment_score")
+                                if raw_sent is not None:
+                                    sentiment_score = float(str(raw_sent))
+                    except Exception:
+                        pass
+
                     THRESHOLD = 0.7
                     if abs(sentiment_score) > THRESHOLD:
-                        # スコアが極端な場合はリストに追加せずスキップ
                         continue
-                    # ----------------------------------------
 
                     posts.append({
                         "id": post_id,
@@ -342,7 +359,6 @@ def search_issues(q: str = Query(..., description="検索キーワード")):
         return {"query": q, "history_id": history_id, "posts": posts}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-    
 
 # ロジックツリーデータ取得API
 @app.get("/api/tree/{post_id}/{tree_type}")
@@ -578,6 +594,17 @@ def get_history_detail(history_id: str, sentiment: str = "all"):
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+    
+@app.post("/api/stop-x")
+def stop_x_collection():
+    request_stop_x()
+    return {"message": "Xデータ収集の中断リクエストを送信しました。"}
+
+# --- 追加：AI一括解析の停止API ---
+@app.post("/api/stop-ai")
+def stop_ai_analysis():
+    request_stop_ai()
+    return {"message": "AI一括解析の中断リクエストを送信しました。"}
 
 if __name__ == "__main__":
     import uvicorn

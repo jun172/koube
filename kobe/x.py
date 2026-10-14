@@ -4,6 +4,10 @@ import requests
 from datetime import datetime, timezone
 from typing import List, Dict
 from ai import get_ai_engine  # ai.py を直接呼び出す
+from database import get_supabase_client  # データベース接続用
+from dotenv import load_dotenv
+
+load_dotenv()  
 
 # X API設定
 X_API_BEARER_TOKEN = os.environ.get("X_API_BEARER_TOKEN")
@@ -14,6 +18,7 @@ class XPostClient:
         self.headers = {
             "Authorization": f"Bearer {X_API_BEARER_TOKEN}"
         }
+        self.supabase = get_supabase_client()
         # Ai.py 側のエンジンを初期化
         self.ai_engine = get_ai_engine()
 
@@ -76,27 +81,77 @@ class XPostClient:
             print(f"Network/Connection Error in X.py: {e}")
             return []
         
-    def send_to_ai(self, posts: List[Dict]):
+    def save_posts_to_db(self, posts: List[Dict]) -> List[Dict]:
         """
-        取得した投稿データをデータベースを介さず、そのまま Ai.py へ引き渡して分析を実行する
+        取得した投稿を事前に sns_posts テーブルへ保存し、DB側で採番された主キーIDを安全に取得する
         """
+        saved_posts = []
         for post in posts:
             try:
-                print(f"-> AIへデータを直接送信中 (Original ID: {post['original_post_id']})")
+                post_id = None
                 
-                # ai.py の generate_analysis の定義に合わせてデータを渡す
-                # ※ ai.py側の引数仕様（post_idやtextなど）に合わせて調整してください
+                # 1. 既に同じ original_post_id が存在するかチェック
+                existing = self.supabase.table("sns_posts").select("id").eq("original_post_id", post["original_post_id"]).execute()
+                
+                if existing and getattr(existing, "data", None):
+                    data_list = existing.data
+                    if isinstance(data_list, list) and len(data_list) > 0:
+                        first_item = data_list[0]
+                        # 辞書型かオブジェクト型かに応じて安全にIDを取り出す
+                        if isinstance(first_item, dict):
+                            post_id = first_item.get("id")
+                        else:
+                            post_id = getattr(first_item, "id", None)
+                
+                # 2. 存在しない場合は新規データを挿入
+                if not post_id:
+                    res = self.supabase.table("sns_posts").insert(post).execute()
+                    if res and getattr(res, "data", None):
+                        res_list = res.data
+                        if isinstance(res_list, list) and len(res_list) > 0:
+                            first_item = res_list[0]
+                            if isinstance(first_item, dict):
+                                post_id = first_item.get("id")
+                            else:
+                                post_id = getattr(first_item, "id", None)
+                
+                # それでも取得できなかった場合はスキップ
+                if not post_id:
+                    print(f"Skipping post {post['original_post_id']} due to missing DB ID.")
+                    continue
+                
+                # AI分析へ渡すデータにDB上の主キー（db_id）を付与
+                post_copy = post.copy()
+                post_copy["db_id"] = post_id
+                saved_posts.append(post_copy)
+                
+            except Exception as e:
+                print(f"sns_posts Insert Error for {post.get('original_post_id')}: {e}")
+                
+        return saved_posts
+    
+    def send_to_ai(self, posts: List[Dict]):
+        """
+        sns_posts テーブルへ保存完了後、そのIDを紐づけてAi.pyへ分析を実行させる
+        """
+        saved_posts = self.save_posts_to_db(posts)
+        
+        for post in saved_posts:
+            try:
+                print(f"-> AIへデータを送信中 (DB ID: {post['db_id']}, Original ID: {post['original_post_id']})")
+                
                 self.ai_engine.generate_analysis(
-                    post_id=post["original_post_id"], # DBを使わない場合は文字列のID等をそのまま渡すか、ai.py側を調整します
+                    post_id=post["db_id"],  # データベース上の主キーを渡すことで外部キーエラーを防止
                     text=post["post_text"],
-                    like_count=post["likes_count"]
+                    like_count=post["likes_count"],
+                    reply_count=post["replies_count"]
                 )
             except Exception as e:
                 print(f"AI Processing Error: {e}")
                 
     def run_collection_task(self, keywords: List[str]):
         """
-        Xからデータを取得し、直接Ai.pyへ流し込むタスクを実行する
+        Xからデータを取得し、sns_postsへの保存を経てAIへ流し込むタスクを実行する
         """
         print("X (Twitter) データ収集およびAI連携タスクを開始します...")
         for keyword in keywords:

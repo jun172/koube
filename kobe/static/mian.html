@@ -23,10 +23,14 @@
         /* ユーザー名表示エリア */
         .user-welcome { font-size: 14px; color: #8ab4f8; font-weight: bold; padding-bottom: 15px; border-bottom: 1px solid #333; }
 
-        /* 新しいチャットボタン */
-        .new-chat-btn { margin: 15px 0; padding: 10px; background-color: #8ab4f8; color: #131314; border: none; border-radius: 8px; font-weight: bold; cursor: pointer; transition: background-color 0.2s, transform 0.1s; }
+        /* 新しいチャットボタン・アクションボタン */
+        .new-chat-btn { margin: 8px 0; padding: 10px; background-color: #8ab4f8; color: #131314; border: none; border-radius: 8px; font-weight: bold; cursor: pointer; transition: background-color 0.2s, transform 0.1s; width: 100%; text-align: center; box-sizing: border-box; }
         .new-chat-btn:hover { background-color: #aecbfa; }
         .new-chat-btn:active { transform: scale(0.98); }
+
+        /* 停止ボタン用スタイル */
+        .stop-btn { background-color: #f28b82 !important; color: #131314 !important; }
+        .stop-btn:hover { background-color: #f6aea9 !important; }
 
         /* モバイル用ハンバーガーメニューボタン */
         .mobile-menu-btn { display: none; position: fixed; top: 12px; left: 12px; z-index: 101; background: #1e1f20; border: 1px solid #444746; color: #e3e3e3; padding: 8px 12px; border-radius: 8px; cursor: pointer; font-size: 16px; align-items: center; justify-content: center; }
@@ -172,8 +176,12 @@
             <button class="new-chat-btn" onclick="startNewChat()">
                 キーワード分析に戻る  
             </button>
-            <button class="new-chat-btn" onclick="triggerXCollection()" style="background: #8ab4f8; color: #131314; font-weight: bold; margin-top: 8px;">Xから最新データを収集・AI解析</button>
-            <button class="new-chat-btn" onclick="triggerAiAnalysis()" style="background: #8ab4f8; color: #131314; font-weight: bold; margin-top: 8px;"> AI一括解析を実行</button>
+            <button class="new-chat-btn" onclick="triggerXCollection()">Xから最新データを収集・AI解析</button>
+            <button class="new-chat-btn stop-btn" onclick="stopXCollection()">🛑 X収集を停止</button>
+
+            <button class="new-chat-btn" onclick="triggerAiAnalysis()" style="margin-top: 12px;">AI一括解析を実行</button>
+            <button class="new-chat-btn stop-btn" onclick="stopAiAnalysis()">🛑 AI解析を停止</button>
+
             <div id="history-list">
                 <h3>検索履歴</h3>
             </div>
@@ -205,8 +213,8 @@
             </div>
         </main>
     </div>
-<!-- D3.js本体 -->
-<script>// main.js
+
+<script>
 const API_BASE_URL = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' 
     ? 'http://localhost:8000' 
     : '';
@@ -272,8 +280,8 @@ function renderTags() {
     html += `<button class="add-tag-btn" onclick="showAddTagInput()">+ 追加</button>`;
     container.innerHTML = html;
 }
+
 async function triggerXCollection() {
-    // 現在登録されているカスタムタグのキーワードをまとめて送信する例
     if (!customTags || customTags.length === 0) {
         alert("収集するキーワードがありません。");
         return;
@@ -291,14 +299,27 @@ async function triggerXCollection() {
         });
         
         if (!response.ok) throw new Error("APIの呼び出しに失敗しました");
-        
-        const data = await response.json();
-        alert("バックグラウンドでXデータ収集とAI解析を開始しました！しばらく待ってから再読み込みしてください。");
+        alert("バックグラウンドでXデータ収集とAI解析を開始しました！");
     } catch (error) {
         console.error("収集エラー:", error);
         alert("データの収集開始に失敗しました。");
     }
 }
+
+// --- X収集の停止処理 ---
+async function stopXCollection() {
+    try {
+        const response = await fetch(`${API_BASE_URL}/api/stop-x`, {
+            method: 'POST'
+        });
+        const data = await response.json();
+        alert(data.message || "X収集の停止リクエストを送信しました。");
+    } catch (error) {
+        console.error("X停止エラー:", error);
+        alert("X収集の停止に失敗しました。");
+    }
+}
+
 function showAddTagInput() {
     const container = document.getElementById('tagContainer');
     if (!container) return;
@@ -322,6 +343,7 @@ function showAddTagInput() {
     const input = document.getElementById('newTagInput');
     if (input) input.focus();
 }
+
 async function triggerAiAnalysis() {
     if (!confirm("データベース内の全投稿に対してAI解析を再実行しますか？")) {
         return;
@@ -341,6 +363,21 @@ async function triggerAiAnalysis() {
         alert("AI解析の起動に失敗しました。サーバーのログを確認してください。");
     }
 }
+
+// --- AI解析の停止処理 ---
+async function stopAiAnalysis() {
+    try {
+        const response = await fetch(`${API_BASE_URL}/api/stop-ai`, {
+            method: 'POST'
+        });
+        const data = await response.json();
+        alert(data.message || "AI解析の停止リクエストを送信しました。");
+    } catch (error) {
+        console.error("AI停止エラー:", error);
+        alert("AI解析の停止に失敗しました。");
+    }
+}
+
 function confirmAddTag() {
     const input = document.getElementById('newTagInput');
     if (!input) return;
@@ -474,89 +511,79 @@ function renderPostsContainer(queryTitle, posts, currentTab = 'all', historyId =
         postsHtml = `<p style="color:#aaa; font-size:13px; padding: 10px 0;">該当する投稿データが見つかりませんでした。</p>`;
     } else {
         posts.forEach((post) => {
-    // 投稿の原文を確実に取得できるようにフォールバックを設定
-    const textForTags = post.post_text || post.title || post.summary || '';
-    
-    // summaryがあり、かつ原文(post_text)と異なる場合のみ上部に要約を表示する
-    const displaySummary = (post.summary && post.summary !== post.post_text) 
-        ? `<div class="post-summary">${post.summary}</div>` 
-        : '';
+        const textForTags = post.post_text || post.title || post.summary || '';
         
-    const tagsHtml = renderHashtags(textForTags);
+        // すべての投稿を要約として表示する（summaryがあればそれを使用、なければ原文の先頭を切り出して要約風にする）
+        const summaryText = post.summary ? post.summary : (textForTags.length > 50 ? textForTags.slice(0, 50) + '...' : textForTags);
+            
+        const tagsHtml = renderHashtags(textForTags);
 
-    let dateStr = '';
-    if (post.collected_at) {
-        const dateObj = new Date(post.collected_at);
-        dateStr = `<span class="date-badge"> ${dateObj.toLocaleString()}</span>`;
-    }
-
-    // 感情スコアのバッジ生成ロジック
-    let sentimentBadge = '';
-    if (post.sentiment_score !== undefined && post.sentiment_score !== null) {
-        const sScore = parseFloat(post.sentiment_score);
-        let sColor = '#8ab4f8'; // 中立カラー（青系）
-        let sText = '中立';
-        
-        if (sScore > 0) {
-            sColor = '#81c995'; // ポジティブ（緑系）
-            sText = `ポジティブ (${sScore.toFixed(2)})`;
-        } else if (sScore < 0) {
-            sColor = '#f28b82'; // ネガティブ（赤系）
-            sText = `ネガティブ (${sScore.toFixed(2)})`;
+        let dateStr = '';
+        if (post.collected_at) {
+            const dateObj = new Date(post.collected_at);
+            dateStr = `<span class="date-badge"> ${dateObj.toLocaleString()}</span>`;
         }
-        sentimentBadge = `<span style="background: rgba(255,255,255,0.05); color: ${sColor}; border: 1px solid ${sColor}; padding: 2px 6px; border-radius: 4px; font-size: 10px;">${sText}</span>`;
-    }
 
-    postsHtml += `
-        <div class="post-item">
-            <div class="post-header" onclick="toggleLogicTree(this, '${post.id}')">
-                ${displaySummary}
-                <div class="post-original">「${textForTags}」</div>
-                ${tagsHtml}
-                <div class="post-footer" style="display: flex; gap: 10px; align-items: center; margin-top: 8px; flex-wrap: wrap;">
-                    <span class="like-badge">❤ ${post.likes || 0} いいね</span>
-                    ${sentimentBadge}
-                    ${dateStr}
+        // 感情スコアのバッジ生成ロジック
+        let sentimentBadge = '';
+        if (post.sentiment_score !== undefined && post.sentiment_score !== null) {
+            const sScore = parseFloat(post.sentiment_score);
+            let sColor = '#8ab4f8'; // 中立カラー（青系）
+            let sText = '中立';
+            
+            if (sScore > 0) {
+                sColor = '#81c995'; // ポジティブ（緑系）
+                sText = `ポジティブ (${sScore.toFixed(2)})`;
+            } else if (sScore < 0) {
+                sColor = '#f28b82'; // ネガティブ（赤系）
+                sText = `ネガティブ (${sScore.toFixed(2)})`;
+            }
+            sentimentBadge = `<span style="background: rgba(255,255,255,0.05); color: ${sColor}; border: 1px solid ${sColor}; padding: 2px 6px; border-radius: 4px; font-size: 10px;">${sText}</span>`;
+        }
+
+        postsHtml += `
+            <div class="post-item">
+                <div class="post-header" onclick="toggleLogicTree(this, '${post.id}')">
+                    <!-- すべて要約文として表示 -->
+                    <div class="post-summary">${summaryText}</div>
+                    ${tagsHtml}
+                    <div class="post-footer" style="display: flex; gap: 10px; align-items: center; margin-top: 8px; flex-wrap: wrap;">
+                        <span class="like-badge">❤ ${post.likes || 0} いいね</span>
+                        ${sentimentBadge}
+                        ${dateStr}
+                    </div>
                 </div>
             </div>
-        </div>
-    `;
-});
+        `;
+    });
     }
 
     const currentId = historyId || getCurrentHistoryId();
 
     displayArea.innerHTML = `
         <div class="analysis-card" style="width: 100%; box-sizing: border-box;">
-        <div style="display: flex; gap: 6px;">
-    <button onclick="switchSentimentTab('${currentId}', 'all')" 
-        style="background: ${currentTab === 'all' ? '#8ab4f8' : '#222'}; color: ${currentTab === 'all' ? '#131314' : '#fff'}; font-weight: ${currentTab === 'all' ? 'bold' : 'normal'}; border: 1px solid ${currentTab === 'all' ? '#8ab4f8' : '#444'}; padding: 5px 10px; border-radius: 4px; font-size: 11px; cursor: pointer; transition: all 0.2s;"
-        onmouseover="if('${currentTab}' !== 'all') { this.style.background='#333'; this.style.borderColor='#666'; }"
-        onmouseout="if('${currentTab}' !== 'all') { this.style.background='#222'; this.style.borderColor='#444'; }"
-    >すべて</button>
+        <div style="display: flex; gap: 6px; margin-bottom: 16px;">
+            <button onclick="switchSentimentTab('${currentId}', 'all')" 
+                style="background: ${currentTab === 'all' ? '#8ab4f8' : '#222'}; color: ${currentTab === 'all' ? '#131314' : '#fff'}; font-weight: ${currentTab === 'all' ? 'bold' : 'normal'}; border: 1px solid ${currentTab === 'all' ? '#8ab4f8' : '#444'}; padding: 5px 10px; border-radius: 4px; font-size: 11px; cursor: pointer;"
+            >すべて</button>
 
-    <button onclick="switchSentimentTab('${currentId}', 'positive')" 
-        style="background: ${currentTab === 'positive' ? '#8ab4f8' : '#222'}; color: ${currentTab === 'positive' ? '#131314' : '#fff'}; font-weight: ${currentTab === 'positive' ? 'bold' : 'normal'}; border: 1px solid ${currentTab === 'positive' ? '#8ab4f8' : '#444'}; padding: 5px 10px; border-radius: 4px; font-size: 11px; cursor: pointer; transition: all 0.2s;"
-        onmouseover="if('${currentTab}' !== 'positive') { this.style.background='#333'; this.style.borderColor='#666'; }"
-        onmouseout="if('${currentTab}' !== 'positive') { this.style.background='#222'; this.style.borderColor='#444'; }"
-    >ポジティブ</button>
+            <button onclick="switchSentimentTab('${currentId}', 'positive')" 
+                style="background: ${currentTab === 'positive' ? '#8ab4f8' : '#222'}; color: ${currentTab === 'positive' ? '#131314' : '#fff'}; font-weight: ${currentTab === 'positive' ? 'bold' : 'normal'}; border: 1px solid ${currentTab === 'positive' ? '#8ab4f8' : '#444'}; padding: 5px 10px; border-radius: 4px; font-size: 11px; cursor: pointer;"
+            >ポジティブ</button>
 
-    <button onclick="switchSentimentTab('${currentId}', 'neutral')" 
-        style="background: ${currentTab === 'neutral' ? '#8ab4f8' : '#222'}; color: ${currentTab === 'neutral' ? '#131314' : '#fff'}; font-weight: ${currentTab === 'neutral' ? 'bold' : 'normal'}; border: 1px solid ${currentTab === 'neutral' ? '#8ab4f8' : '#444'}; padding: 5px 10px; border-radius: 4px; font-size: 11px; cursor: pointer; transition: all 0.2s;"
-        onmouseover="if('${currentTab}' !== 'neutral') { this.style.background='#333'; this.style.borderColor='#666'; }"
-        onmouseout="if('${currentTab}' !== 'neutral') { this.style.background='#222'; this.style.borderColor='#444'; }"
-    >中立</button>
+            <button onclick="switchSentimentTab('${currentId}', 'neutral')" 
+                style="background: ${currentTab === 'neutral' ? '#8ab4f8' : '#222'}; color: ${currentTab === 'neutral' ? '#131314' : '#fff'}; font-weight: ${currentTab === 'neutral' ? 'bold' : 'normal'}; border: 1px solid ${currentTab === 'neutral' ? '#8ab4f8' : '#444'}; padding: 5px 10px; border-radius: 4px; font-size: 11px; cursor: pointer;"
+            >中立</button>
 
-    <button onclick="switchSentimentTab('${currentId}', 'negative')" 
-        style="background: ${currentTab === 'negative' ? '#8ab4f8' : '#222'}; color: ${currentTab === 'negative' ? '#131314' : '#fff'}; font-weight: ${currentTab === 'negative' ? 'bold' : 'normal'}; border: 1px solid ${currentTab === 'negative' ? '#8ab4f8' : '#444'}; padding: 5px 10px; border-radius: 4px; font-size: 11px; cursor: pointer; transition: all 0.2s;"
-        onmouseover="if('${currentTab}' !== 'negative') { this.style.background='#333'; this.style.borderColor='#666'; }"
-        onmouseout="if('${currentTab}' !== 'negative') { this.style.background='#222'; this.style.borderColor='#444'; }"
-    >ネガティブ</button>
-</div>
+            <button onclick="switchSentimentTab('${currentId}', 'negative')" 
+                style="background: ${currentTab === 'negative' ? '#8ab4f8' : '#222'}; color: ${currentTab === 'negative' ? '#131314' : '#fff'}; font-weight: ${currentTab === 'negative' ? 'bold' : 'normal'}; border: 1px solid ${currentTab === 'negative' ? '#8ab4f8' : '#444'}; padding: 5px 10px; border-radius: 4px; font-size: 11px; cursor: pointer;"
+            >ネガティブ</button>
+        </div>
             ${postsHtml}
         </div>
     `;
 }
+
 function getCurrentHistoryId() {
     const pathParts = window.location.pathname.split('/').filter(Boolean);
     const appIndex = pathParts.indexOf('app');
