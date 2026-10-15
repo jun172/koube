@@ -286,9 +286,11 @@ def serve_app_history_dashboard(history_id: str):
 def serve_reset2():
     return FileResponse("static/reset2.html")
 # --- キーワードから投稿を取得 API ---
+# main.py の api/search 部分を修正
 @app.get("/api/search")
 def search_issues(q: str = Query(..., description="検索キーワード")):
     try:
+        # まず通常のキーワード検索を行う
         response = supabase.table("sns_posts").select(
             "id, platform, post_text, likes_count, collected_at"
         ).ilike("post_text", f"%{q}%").order("collected_at", desc=True).execute()
@@ -299,6 +301,11 @@ def search_issues(q: str = Query(..., description="検索キーワード")):
                 if isinstance(post_info, dict):
                     post_id = post_info.get("id")
                     text = str(post_info.get("post_text") or "")
+                    
+                    # --- ★ノイズ（店舗オープン、日常の料理、イベント等）の簡易キーワードブロック ---
+                    noise_keywords = ["オープン", "開店", "新店", "ご紹介", "作ってみた", "調理", "実験", "体験", "美味しかっ", "旅行", "ランチ", "カフェ"]
+                    if any(nk in text for nk in noise_keywords):
+                        continue  # ノイズワードが含まれていれば結果から除外
                     
                     # デフォルトの要約（原文の先頭）
                     summary_text = text[:40] + ("..." if len(text) > 40 else "")
@@ -359,7 +366,6 @@ def search_issues(q: str = Query(..., description="検索キーワード")):
         return {"query": q, "history_id": history_id, "posts": posts}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
 # ロジックツリーデータ取得API
 @app.get("/api/tree/{post_id}/{tree_type}")
 def get_d3_tree_data(post_id: str, tree_type: str):

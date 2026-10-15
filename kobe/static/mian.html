@@ -202,9 +202,10 @@
                     <!-- JavaScriptで初期キーワードと追加フォームがここに描画されます -->
                 </div>
                 <div class="search-container">
-                    <input type="text" id="searchInput" placeholder="分析キーワードを入力..." class="search-input" onkeydown="if(event.key === 'Enter') executeSearch()">
-                    <button class="search-icon-button" onclick="executeSearch()">
-                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <!-- onkeydown を修正し、イベントオブジェクト(event)を受け取って確実に制御する -->
+                    <input type="text" id="searchInput" placeholder="分析キーワードを入力..." class="search-input" onkeydown="handleSearchKeyDown(event)">
+                            <button type="button" class="search-icon-button" onclick="executeSearch()">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                             <circle cx="11" cy="11" r="7" stroke="#dcdcdc" stroke-width="2.2"/>
                             <line x1="16.2" y1="16.2" x2="21" y2="21" stroke="#dcdcdc" stroke-width="2.2" stroke-linecap="round"/>
                         </svg>
@@ -255,6 +256,55 @@ window.onload = async function() {
     }
 };
 
+// キーボード入力時の安全なハンドラ
+function handleSearchKeyDown(event) {
+    if (event.key === 'Enter') {
+        event.preventDefault(); // デフォルトの挙動やバブリングを完全ブロック
+        executeSearch();
+    }
+}
+
+// 検索実行関数の先頭に「実行中ガード」を追加して連打・勝手な二重送信を防止
+let isSearching = false;
+
+async function executeSearch() {
+    if (isSearching) return; // すでに検索中なら何もしない
+    
+    const input = document.getElementById('searchInput');
+    if (!input) return;
+    
+    const query = input.value.trim();
+    if (!query) return;
+
+    isSearching = true; // ロック開始
+
+    try {
+        const response = await fetch(`${API_BASE_URL}/api/search?q=${encodeURIComponent(query)}`);
+        const data = await response.json();
+
+        if (data.history_id) {
+            const newUrl = `/app/${data.history_id}`;
+            window.history.pushState({ path: newUrl }, '', newUrl);
+        }
+
+        currentQueryTitle = data.query || query;
+        currentPosts = data.results && data.results.posts ? data.results.posts : (data.posts || []);
+
+        const currentId = data.history_id || getCurrentHistoryId();
+        renderPostsContainer(currentQueryTitle, currentPosts, 'all', currentId);
+        
+        input.value = '';
+        const displayArea = document.getElementById('mainDisplayArea');
+        if (displayArea) displayArea.scrollTo({ top: displayArea.scrollHeight, behavior: 'smooth' });
+
+        await fetchAndRenderHistories();
+    } catch (error) {
+        console.error("検索データの取得に失敗しました:", error);
+        alert("サーバーとの通信に失敗しました。APIが起動しているか確認してください。");
+    } finally {
+        isSearching = false; // 処理完了後にロック解除
+    }
+}
 function toggleSidebar() {
     const sidebar = document.getElementById('sidebar');
     const overlay = document.getElementById('sidebarOverlay');
