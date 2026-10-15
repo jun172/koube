@@ -9,6 +9,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, HTMLResponse
 from datetime import datetime, timezone
 import uuid
+import uvicorn
 # 自作モジュール
 from ai import *
 from database import *
@@ -646,5 +647,6 @@ def get_keywords():
         raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+    # Cloud Runから渡されるポート環境変数を取得する（取得できない場合は8080）
+    port = int(os.environ.get("PORT", 8080))
+    uvicorn.run("main:app", host="0.0.0.0", port=port)

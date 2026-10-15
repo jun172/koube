@@ -12,5 +12,4 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # Cloud Runが割り当てるポート（環境変数 PORT）を受け取り、Uvicornで起動する設定
-# Cloud Runでは通常ポート8080が使われます
-CMD exec uvicorn main:app --host 0.0.0.0 --port ${PORT:-8080}
+CMD sh -c "uvicorn main:app --host 0.0.0.0 --port ${PORT:-8080}"
