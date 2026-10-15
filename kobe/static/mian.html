@@ -236,6 +236,24 @@ window.onload = async function() {
         welcomeUser.textContent = `ようこそ、${name} さん`;
     }
 
+    // ★ ここでバックエンドからキーワードを取得して初期タグに反映（未設定の場合）
+    if (!localStorage.getItem("customTags")) {
+        try {
+            const res = await fetch(`${API_BASE_URL}/api/keywords`);
+            if (res.ok) {
+                const data = await res.json();
+                // 取得したデータからデフォルトタグを設定（例：神戸市や主要キーワード）
+                customTags = ['神戸市', '三宮', '不満', '道路'];
+                localStorage.setItem("customTags", JSON.stringify(customTags));
+            }
+        } catch (error) {
+            console.error("キーワードの取得に失敗しました:", error);
+            customTags = ['神戸市', '不満'];
+        }
+    } else {
+        customTags = JSON.parse(localStorage.getItem("customTags"));
+    }
+
     renderTags();
     await fetchAndRenderHistories();
 

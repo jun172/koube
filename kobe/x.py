@@ -11,7 +11,7 @@ load_dotenv()
 
 # X API設定
 X_API_BEARER_TOKEN = os.environ.get("X_API_BEARER_TOKEN")
-SEARCH_ENDPOINT = "https://api.x.com/2/tweets/search/recent"
+SEARCH_ENDPOINT = "https://api.twitter.com/2/tweets/search/all"
 
 class XPostClient:
     def __init__(self):
@@ -22,13 +22,25 @@ class XPostClient:
         # Ai.py 側のエンジンを初期化
         self.ai_engine = get_ai_engine()
 
-    def fetch_posts_by_keyword(self, keyword: str, max_results: int = 10) -> List[Dict]:
+    def fetch_posts_by_keyword(self, keyword: str, max_results: int = 50) -> List[Dict]:
         """
-        X APIを用いて指定キーワードの投稿を取得する（ノイズ除外、フォロワー制限、地域・文脈フィルターを適用）
+        X APIを用いて指定キーワードの投稿を取得する（AND条件、ノイズ除外、地域・文脈フィルターを適用）
         """
-        # キーワードをダブルクォーテーションで囲み、PRやリツイートを除外するクエリ
-        query = f'"{keyword}" -is:retweet -PR -キャンペーン -求人 lang:ja'
+        # 呼び出し元から渡されたキーワードの二重引用符や 'OR' を掃除し、安全にAND条件に変換する
+        cleaned_keyword = keyword.replace('"', '').replace("'", "")
+        words = [w.strip() for w in cleaned_keyword.split() if w.strip() and w.strip().upper() != "OR"]
         
+        if words:
+            quoted_words = [f'"{w}"' for w in words]
+            keyword_query = " ".join(quoted_words)
+        else:
+            keyword_query = f'"{cleaned_keyword}"'
+        
+        # リツイートやPRなどを除外するクエリの構築
+        query = f'{keyword_query} -is:retweet -PR -キャンペーン -求人 lang:ja'
+        
+        print(f"Starting collection with combined query: {query}")
+
         params = {
             "query": query,
             "max_results": max_results,
@@ -44,11 +56,13 @@ class XPostClient:
                 print("API Error: X APIのレート制限（Rate Limit）に達しました。")
                 return []
             elif response.status_code != 200:
-                print(f"X API Error: {response.status_code} - {response.text}")
+                print(f"X API Error: {response.status_code}\n{response.text}")
                 return []
 
             data = response.json()
             tweets = data.get("data", [])
+            
+            print(f"DEBUG: X APIから取得できた生のツイート数: {len(tweets)}件")
 
             includes = data.get("includes", {})
             users = includes.get("users", [])
@@ -62,52 +76,35 @@ class XPostClient:
             for tweet in tweets:
                 author_id = tweet.get("author_id")
                 followers_count = user_followers_map.get(author_id, 0)
-                
-                # フォロワー1万人以上のアカウントを除外
-                if followers_count >= 10000:
-                    continue
-
                 text = tweet.get("text", "")
                 
                 # 1. 神戸市の全行政区＋主要なエリア・駅名を含めたリスト（地域フィルター）
                 kobe_keywords = [
-                    # 市名・広域
                     "神戸", "神戸市",
-                    # 神戸市の9区（「〇〇区」と区名単体の両方に対応）
                     "東灘区", "灘区", "中央区", "兵庫区", "長田区", "須磨区", "垂水区", "北区", "西区",
                     "東灘", "灘", "兵庫", "長田", "須磨", "垂水",
-                    # 主要な駅・エリア・通称
                     "三宮", "三ノ宮", "元町", "新長田", "板宿", "名谷", "学園都市", 
                     "西神中央", "有馬", "六甲", "岡本", "御影", "ポートアイランド", "六甲アイランド"
                 ]
                 
-                # いずれの地域ワードも本文に含まれていない場合はスキップ
                 if not any(kw in text for kw in kobe_keywords):
                     continue
 
-                # 2. 【配列の外】「不満」やインフラ・子育てなど行政課題・市民の声に関するキーワードチェック
-                # 2. 【配列の外】「不満」やインフラ・子育てなど行政課題・市民の声に関するキーワードチェック
+                # 2. 「不満」やインフラ・子育てなど行政課題・市民の声に関するキーワードチェック
                 complaint_keywords = [
-                    # 感情・評価
                     "不満", "改善", "要望", "困", "問題", "どうにか", "危険", "ひどい", "なんとか", 
                     "不便", "遅い", "足りない", "汚い", "怖い", "最悪", "邪魔", "うるさい", "嫌", "対応",
-                    # 交通・道路・街
                     "道路", "インフラ", "渋滞", "混雑", "遅延", "バス", "電車", "駅", "歩道", "街灯", 
                     "工事", "通行止め", "駐輪", "路駐", "事故", "信号",
-                    # 子育て・暮らし・行政
                     "子育て", "保育", "学校", "給食", "児童", "医療", "公園", "ゴミ", "騒音", "市役所", "行政"
                 ]
                 
-                # 地域名が入っていても、上記の文脈ワードが一切なければスキップ
                 if not any(cw in text for cw in complaint_keywords):
                     continue
                 
-                # 重複を排除して、マッチしたキーワードの種類数をカウント
                 matched_complaints = set(cw for cw in complaint_keywords if cw in text)
 
-                # 不満・課題関連のキーワードが【2種類以上】入っている場合のみ保存
-                if len(matched_complaints) >= 3:
-                    # データの構築
+                if len(matched_complaints) >= 1:
                     metrics = tweet.get("public_metrics", {})
                     post_data = {
                         "platform": "X",
@@ -115,23 +112,11 @@ class XPostClient:
                         "post_text": text,
                         "likes_count": metrics.get("like_count", 0),
                         "replies_count": metrics.get("reply_count", 0),
+                        "posted_at": tweet.get("created_at"),
+                        "collected_at": datetime.now(timezone.utc).isoformat(),
                     }
-                    
-                    # TODO: データベースへの保存処理（例: db.insert_post(post_data) など）をここに記述
-                    # 例としてプリント出力またはリストへの追加に置き換えてもOKです
+                    processed_posts.append(post_data)
                     print(f"保存対象: {text}")
-                
-                metrics = tweet.get("public_metrics", {})
-                post_data = {
-                    "platform": "X",
-                    "original_post_id": str(tweet.get("id")),
-                    "post_text": text,
-                    "likes_count": metrics.get("like_count", 0),
-                    "replies_count": metrics.get("reply_count", 0),
-                    "posted_at": tweet.get("created_at"),
-                    "collected_at": datetime.now(timezone.utc).isoformat()
-                }
-                processed_posts.append(post_data)
 
             return processed_posts
 

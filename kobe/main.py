@@ -176,36 +176,45 @@ async def trigger_collection(request: CollectionRequest, background_tasks: Backg
 
     def run_pipeline():
         ai_engine = get_ai_engine()
-        for keyword in request.keywords:
-            print(f"Starting collection for keyword: {keyword}")
-            posts = x_client.fetch_posts_by_keyword(keyword)
-            if not posts:
-                continue
-            
-            for post in posts:
-                try:
-                    saved_res = supabase.table("sns_posts").upsert(
-                        post, 
-                        on_conflict="original_post_id"
-                    ).select().execute() # .select() を付加して戻り値（id）を確実に取得
+        
+        # キーワードをスペースで結合してAND条件のクエリにする（例: "神戸市 不満"）
+        cleaned_keywords = [kw.strip() for kw in request.keywords if kw.strip()]
+        combined_keyword = " ".join(cleaned_keywords)
+        print(f"Starting collection with combined query: {combined_keyword}")
+        
+        # まとめたクエリでX APIからデータを一括取得
+        posts = x_client.fetch_posts_by_keyword(combined_keyword)
+        if not posts:
+            print("No posts found for the combined query.")
+            return
+        
+        for post in posts:
+            try:
+                # Supabaseに保存するデータを作成（DBにない 'matched_complaints' カラムは除外する）
+                db_payload = post.copy()
+                db_payload.pop("matched_complaints", None)
 
-                    if saved_res and hasattr(saved_res, "data") and isinstance(saved_res.data, list) and len(saved_res.data) > 0:
-                        first_row = saved_res.data[0]
-                        if isinstance(first_row, dict):
-                            raw_id = first_row.get("id", 0)
-                            post_db_id = int(str(raw_id)) if raw_id is not None else 0
-                            if post_db_id:
-                                ai_engine.generate_analysis(
-                                    post_id=post_db_id, 
-                                    text=post['post_text'], 
-                                    like_count=post['likes_count']
-                                )
-                except Exception as e:
-                    print(f"AI Analysis Pipeline Error: {e}")
+                saved_res = supabase.table("sns_posts").upsert(
+                    db_payload, 
+                    on_conflict="original_post_id"
+                ).select().execute() # .select() を付加して戻り値（id）を確実に取得
+
+                if saved_res and hasattr(saved_res, "data") and isinstance(saved_res.data, list) and len(saved_res.data) > 0:
+                    first_row = saved_res.data[0]
+                    if isinstance(first_row, dict):
+                        raw_id = first_row.get("id", 0)
+                        post_db_id = int(str(raw_id)) if raw_id is not None else 0
+                        if post_db_id:
+                            ai_engine.generate_analysis(
+                                post_id=post_db_id, 
+                                text=post['post_text'], 
+                                like_count=post['likes_count']
+                            )
+            except Exception as e:
+                print(f"AI Analysis Pipeline Error: {e}")
 
     background_tasks.add_task(run_pipeline)
     return {"message": "Data collection and AI analysis pipeline started in background."}
-
 
 # 2. 課題・ロジックツリーカタログ取得API
 @app.get("/api/issues")
@@ -611,6 +620,26 @@ def stop_x_collection():
 def stop_ai_analysis():
     request_stop_ai()
     return {"message": "AI一括解析の中断リクエストを送信しました。"}
+
+# 現在設定されているキーワードやカスタムタグを取得するAPI
+@app.get("/api/keywords")
+def get_keywords():
+    try:
+        # 必要に応じてデータベースや定義済みのリストを返す
+        kobe_keywords = [
+            "神戸", "神戸市", "東灘区", "灘区", "中央区", "兵庫区", "長田区", 
+            "須磨区", "垂水区", "北区", "西区", "三宮", "三ノ宮", "元町", "新長田"
+        ]
+        complaint_keywords = [
+            "不満", "改善", "要望", "問題", "危険", "道路", "インフラ", 
+            "渋滞", "混雑", "バス", "電車", "公園", "ゴミ", "子育て", "行政"
+        ]
+        return {
+            "kobe_keywords": kobe_keywords,
+            "complaint_keywords": complaint_keywords
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
     import uvicorn
