@@ -22,24 +22,30 @@ class XPostClient:
         # Ai.py 側のエンジンを初期化
         self.ai_engine = get_ai_engine()
 
-    def fetch_posts_by_keyword(self, keyword: str, max_results: int = 50) -> List[Dict]:
+    def fetch_posts_by_keyword(self, keywords: List[str], operator: str = "OR", max_results: int = 50) -> List[Dict]:
         """
-        X APIを用いて指定キーワードの投稿を取得する（AND条件、ノイズ除外、地域・文脈フィルターを適用）
+        X APIを用いて指定キーワードの投稿を取得する
+        operator: "OR"（いずれかを含む） または "AND"（すべて含む）
         """
-        # 呼び出し元から渡されたキーワードの二重引用符や 'OR' を掃除し、安全にAND条件に変換する
-        cleaned_keyword = keyword.replace('"', '').replace("'", "")
-        words = [w.strip() for w in cleaned_keyword.split() if w.strip() and w.strip().upper() != "OR"]
+        # クリーニング処理
+        cleaned_words = [w.replace('"', '').replace("'", "").strip() for w in keywords if w.strip()]
         
-        if words:
-            quoted_words = [f'"{w}"' for w in words]
-            keyword_query = " ".join(quoted_words)
+        if not cleaned_words:
+            return []
+
+        # 演算子（AND / OR）に応じてクエリを組み立て
+        if operator.upper() == "OR":
+            # 例: ("神戸市" OR "不満" OR "インフラ")
+            query_inner = " OR ".join([f'"{w}"' for w in cleaned_words])
+            keyword_query = f"({query_inner})"
         else:
-            keyword_query = f'"{cleaned_keyword}"'
+            # 例: "神戸市" "不満" "インフラ"
+            keyword_query = " ".join([f'"{w}"' for w in cleaned_words])
         
         # リツイートやPRなどを除外するクエリの構築
         query = f'{keyword_query} -is:retweet -PR -キャンペーン -求人 lang:ja'
         
-        print(f"Starting collection with combined query: {query}")
+        print(f"Starting collection with [{operator}] query: {query}")
 
         params = {
             "query": query,
@@ -66,64 +72,40 @@ class XPostClient:
 
             includes = data.get("includes", {})
             users = includes.get("users", [])
-            user_followers_map = {}
-            for user in users:
-                user_id = user.get("id")
-                metrics = user.get("public_metrics", {})
-                user_followers_map[user_id] = metrics.get("followers_count", 0)
+            user_followers_map = {user.get("id"): user.get("public_metrics", {}).get("followers_count", 0) for user in users}
 
             processed_posts = []
             for tweet in tweets:
                 author_id = tweet.get("author_id")
-                followers_count = user_followers_map.get(author_id, 0)
                 text = tweet.get("text", "")
-                
-                # 1. 神戸市の全行政区＋主要なエリア・駅名を含めたリスト（地域フィルター）
+            
+            
                 kobe_keywords = [
-                    "神戸", "神戸市",
-                    "東灘区", "灘区", "中央区", "兵庫区", "長田区", "須磨区", "垂水区", "北区", "西区",
-                    "東灘", "灘", "兵庫", "長田", "須磨", "垂水",
-                    "三宮", "三ノ宮", "元町", "新長田", "板宿", "名谷", "学園都市", 
-                    "西神中央", "有馬", "六甲", "岡本", "御影", "ポートアイランド", "六甲アイランド"
+                    "神戸", "神戸市", "東灘区", "灘区", "中央区", "兵庫区", "長田区", "須磨区", "垂水区", "北区", "西区",
+                    "三宮", "三ノ宮", "元町", "新長田", "板宿", "名谷", "学園都市", "西神中央", "有馬", "六甲", "ポートアイランド"
                 ]
-                
                 if not any(kw in text for kw in kobe_keywords):
                     continue
 
-                # 2. 「不満」やインフラ・子育てなど行政課題・市民の声に関するキーワードチェック
-                complaint_keywords = [
-                    "不満", "改善", "要望", "困", "問題", "どうにか", "危険", "ひどい", "なんとか", 
-                    "不便", "遅い", "足りない", "汚い", "怖い", "最悪", "邪魔", "うるさい", "嫌", "対応",
-                    "道路", "インフラ", "渋滞", "混雑", "遅延", "バス", "電車", "駅", "歩道", "街灯", 
-                    "工事", "通行止め", "駐輪", "路駐", "事故", "信号",
-                    "子育て", "保育", "学校", "給食", "児童", "医療", "公園", "ゴミ", "騒音", "市役所", "行政"
-                ]
-                
-                if not any(cw in text for cw in complaint_keywords):
-                    continue
-                
-                matched_complaints = set(cw for cw in complaint_keywords if cw in text)
-
-                if len(matched_complaints) >= 1:
-                    metrics = tweet.get("public_metrics", {})
-                    post_data = {
-                        "platform": "X",
-                        "original_post_id": str(tweet.get("id")),
-                        "post_text": text,
-                        "likes_count": metrics.get("like_count", 0),
-                        "replies_count": metrics.get("reply_count", 0),
-                        "posted_at": tweet.get("created_at"),
-                        "collected_at": datetime.now(timezone.utc).isoformat(),
-                    }
-                    processed_posts.append(post_data)
-                    print(f"保存対象: {text}")
+                metrics = tweet.get("public_metrics", {})
+                post_data = {
+                    "platform": "X",
+                    "original_post_id": str(tweet.get("id")),
+                    "post_text": text,
+                    "likes_count": metrics.get("like_count", 0),
+                    "replies_count": metrics.get("reply_count", 0),
+                    "posted_at": tweet.get("created_at"),
+                    "collected_at": datetime.now(timezone.utc).isoformat(),
+                }
+                processed_posts.append(post_data)
+                print(f"保存対象: {text}")
 
             return processed_posts
 
         except Exception as e:
             print(f"Network/Connection Error in X.py: {e}")
             return []
-        
+    
     def save_posts_to_db(self, posts: List[Dict]) -> List[Dict]:
         """
         取得した投稿を事前に sns_posts テーブルへ保存し、DB側で採番された主キーIDを安全に取得する
@@ -189,20 +171,22 @@ class XPostClient:
             except Exception as e:
                 print(f"AI Processing Error: {e}")
                 
-    def run_collection_task(self, keywords: List[str]):
+    def run_collection_task(self, keywords: List[str], operator: str = "OR"):
         """
-        Xからデータを取得し、sns_postsへの保存を経てAIへ流し込むタスクを実行する
+        外から渡されたキーワードのリストを使ってデータ収集を実行する
         """
-        print("X (Twitter) データ収集およびAI連携タスクを開始します...")
-        for keyword in keywords:
-            posts = self.fetch_posts_by_keyword(keyword)
-            if posts:
-                self.send_to_ai(posts)
+        print(f"X (Twitter) データ収集およびAI連携タスクを開始します... キーワード: {keywords}")
+        
+        # 渡されたキーワードリストを使って検索
+        posts = self.fetch_posts_by_keyword(keywords, operator=operator)
+        if posts:
+            self.send_to_ai(posts)
             
-            time.sleep(2)
         print("すべての処理が完了しました。")
-
+        
 if __name__ == "__main__":
     client = XPostClient()
-    target_keywords = ["神戸市 不満", "神戸市 改善", "三宮駅 混雑", "垂水区"]
-    client.run_collection_task(target_keywords)
+    test_keywords = ["神戸市", "不満", "インフラ"]
+    client.run_collection_task(keywords=test_keywords, operator="OR")
+    print("=== AND検索を実行==")
+    client.run_collection_task(keywords=test_keywords,operator="AND")

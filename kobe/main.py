@@ -177,27 +177,31 @@ async def trigger_collection(request: CollectionRequest, background_tasks: Backg
     def run_pipeline():
         ai_engine = get_ai_engine()
         
-        # キーワードをスペースで結合してAND条件のクエリにする（例: "神戸市 不満"）
+        # 修正前：スペースで1つの文字列に結合していた
+        # cleaned_keywords = [kw.strip() for kw in request.keywords if kw.strip()]
+        # combined_keyword = " ".join(cleaned_keywords)
+        # posts = x_client.fetch_posts_by_keyword(combined_keyword)
+        
+        # 修正後：Webから送られてきたキーワードの「リスト」をそのまま x.py に渡す！
         cleaned_keywords = [kw.strip() for kw in request.keywords if kw.strip()]
-        combined_keyword = " ".join(cleaned_keywords)
-        print(f"Starting collection with combined query: {combined_keyword}")
+        print(f"Starting collection with keywords list: {cleaned_keywords}")
         
-        # まとめたクエリでX APIからデータを一括取得
-        posts = x_client.fetch_posts_by_keyword(combined_keyword)
+        # リストのまま渡して、デフォルトのOR検索（または必要に応じた検索）を実行
+        posts = x_client.fetch_posts_by_keyword(cleaned_keywords, operator="OR")
+        
         if not posts:
-            print("No posts found for the combined query.")
+            print("No posts found for the keywords.")
             return
-        
+            
         for post in posts:
             try:
-                # Supabaseに保存するデータを作成（DBにない 'matched_complaints' カラムは除外する）
                 db_payload = post.copy()
                 db_payload.pop("matched_complaints", None)
 
                 saved_res = supabase.table("sns_posts").upsert(
                     db_payload, 
                     on_conflict="original_post_id"
-                ).select().execute() # .select() を付加して戻り値（id）を確実に取得
+                ).select().execute()
 
                 if saved_res and hasattr(saved_res, "data") and isinstance(saved_res.data, list) and len(saved_res.data) > 0:
                     first_row = saved_res.data[0]
