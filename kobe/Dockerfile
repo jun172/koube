@@ -11,4 +11,4 @@ RUN pip install --no-cache-dir -r requirements.txt
 # アプリケーションのコードと静的ファイルをすべてコピー
 COPY . .
 
-CMD exec uvicorn main:app --host 0.0.0.0 --port ${PORT:-8080}git add kobe/Dockerfile
+CMD exec uvicorn main:app --host 0.0.0.0 --port ${PORT:-8080}
