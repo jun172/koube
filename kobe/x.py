@@ -3,10 +3,10 @@ import time
 import requests
 from datetime import datetime, timezone
 from typing import List, Dict
-from ai import get_ai_engine  # ai.py を直接呼び出す
+from ai import * # ai.py を直接呼び出す
 from database import get_supabase_client  # データベース接続用
 from dotenv import load_dotenv
-
+import re
 load_dotenv()  
 
 # X API設定
@@ -22,7 +22,7 @@ class XPostClient:
         # Ai.py 側のエンジンを初期化
         self.ai_engine = get_ai_engine()
 
-    def fetch_posts_by_keyword(self, keywords: List[str], operator: str = "OR", max_results: int = 50) -> List[Dict]:
+    def fetch_posts_by_keyword(self, keywords: List[str], operator: str = "AND", max_results: int = 50) -> List[Dict]:
         """
         X APIを用いて指定キーワードの投稿を取得する
         operator: "OR"（いずれかを含む） または "AND"（すべて含む）
@@ -33,18 +33,20 @@ class XPostClient:
         if not cleaned_words:
             return []
 
-        # 演算子（AND / OR）に応じてクエリを組み立て
-        if operator.upper() == "OR":
-            # 例: ("神戸市" OR "不満" OR "インフラ")
-            query_inner = " OR ".join([f'"{w}"' for w in cleaned_words])
-            keyword_query = f"({query_inner})"
-        else:
-            # 例: "神戸市" "不満" "インフラ"
-            keyword_query = " ".join([f'"{w}"' for w in cleaned_words])
+        # キーワードを半角スペースで結合（X APIのAND条件仕様）
+        keyword_query = " ".join([f'"{w}"' for w in cleaned_words])
         
-        # リツイートやPRなどを除外するクエリの構築
-        query = f'{keyword_query} -is:retweet -PR -キャンペーン -求人 lang:ja'
+        # 広告・スパム・PR・求人・アダルト等およびニュースbot系を除外するクエリ
+        exclusions = [
+            "-is:retweet", 
+            "-PR", "-広告", "-宣伝", "-求人",
+            "-AV", "-アダルト", "-風俗", "-マッチングアプリ",
+            "-has:links",      # ニュース記事やまとめサイトへのリンク付き投稿を除外
+            "-is:nullcast",    # 広告配信専用ツイートを除外
+            "-ニュース", "-速報", "-新聞" # ニュースbot系キーワードの除外
+        ]
         
+        query = f'{keyword_query} {" ".join(exclusions)} lang:ja'
         print(f"Starting collection with [{operator}] query: {query}")
 
         params = {
@@ -70,21 +72,44 @@ class XPostClient:
             
             print(f"DEBUG: X APIから取得できた生のツイート数: {len(tweets)}件")
 
-            includes = data.get("includes", {})
-            users = includes.get("users", [])
-            user_followers_map = {user.get("id"): user.get("public_metrics", {}).get("followers_count", 0) for user in users}
-
             processed_posts = []
             for tweet in tweets:
-                author_id = tweet.get("author_id")
                 text = tweet.get("text", "")
             
-            
+                # 1. 地域キーワード（行政区・主要駅・スポットなど）の判定
                 kobe_keywords = [
                     "神戸", "神戸市", "東灘区", "灘区", "中央区", "兵庫区", "長田区", "須磨区", "垂水区", "北区", "西区",
-                    "三宮", "三ノ宮", "元町", "新長田", "板宿", "名谷", "学園都市", "西神中央", "有馬", "六甲", "ポートアイランド"
+                    "三宮", "三ノ宮", "元町", "新長田", "板宿", "名谷", "学園都市", "西神中央", "有馬", "六甲", "ポートアイランド",
+                    "神戸駅", "三ノ宮駅", "新神戸", "神戸空港"
                 ]
                 if not any(kw in text for kw in kobe_keywords):
+                    continue
+
+                # 2. 不満・若者言葉・スラング（オワコン表現など）のチェック
+                # ※「神戸市」周辺の愚痴や不満、ネットスラングを含んでいるかを判定
+                dissatisfaction_keywords = [
+                    "不満", "不平", "オワコン", "終わってる", "終わってない", "無理", "しんどい", 
+                    "クソ", "ゴミ", "最悪", "勘弁", "改善", "ダメ", "ひどい", "酷い", 
+                    "使えない", "不便", "改悪", "センスない", "何やってる", "税金の無駄"
+                ]
+                
+                # 地域名だけでなく、不満・若者言葉のニュアンスも含まれているかチェック（精度を劇的に上げるため）
+                has_grievance = any(dk in text for dk in dissatisfaction_keywords)
+                
+                # 3. テキスト長とスパム対策のフィルタリング（短い文字・長い文字の両方に対応）
+                clean_text = re.sub(r'https?://\S+|#\w+', '', text).strip()
+                clean_len = len(clean_text)
+
+                # 極端な短文（10文字未満）は除外
+                if clean_len < 10:
+                    continue
+
+                # もし不満・若者言葉が含まれておらず、かつ文章が短い場合はノイズとして除外
+                if clean_len <= 35 and not has_grievance:
+                    continue
+
+                # 改行多すぎスパムを除外
+                if text.count("\n") > 5:
                     continue
 
                 metrics = tweet.get("public_metrics", {})
@@ -98,14 +123,13 @@ class XPostClient:
                     "collected_at": datetime.now(timezone.utc).isoformat(),
                 }
                 processed_posts.append(post_data)
-                print(f"保存対象: {text}")
+                print(f"保存対象 ({clean_len}文字): {text}")
 
             return processed_posts
 
         except Exception as e:
             print(f"Network/Connection Error in X.py: {e}")
             return []
-    
     def save_posts_to_db(self, posts: List[Dict]) -> List[Dict]:
         """
         取得した投稿を事前に sns_posts テーブルへ保存し、DB側で採番された主キーIDを安全に取得する
@@ -186,7 +210,7 @@ class XPostClient:
         
 if __name__ == "__main__":
     client = XPostClient()
-    test_keywords = ["神戸市", "不満", "インフラ"]
+    test_keywords = ["神戸市","オワコン"]
     client.run_collection_task(keywords=test_keywords, operator="OR")
     print("=== AND検索を実行==")
     client.run_collection_task(keywords=test_keywords,operator="AND")

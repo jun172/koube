@@ -2,9 +2,9 @@ import os
 import json
 from typing import Dict, Any, Optional
 from dotenv import load_dotenv
-from google import genai
-from google.genai import types
-
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.linear_model import LogisticRegression
+from sklearn.pipeline import Pipeline
 # ★ Google Cloud Natural Language API のインポート
 from google.cloud import language_v1
 
@@ -17,8 +17,7 @@ from database import *
 # .env ファイルから環境変数を読み込む
 load_dotenv()
 
-# クライアントの初期化（Gemini & Natural Language）
-client = genai.Client()
+# Google Cloud Natural Language クライアントの初期化
 nl_client = language_v1.LanguageServiceClient()
 
 _engine = None
@@ -46,45 +45,47 @@ class AnalysisEngine:
 
     def generate_analysis(self, post_id: Any, text: str, like_count: int, reply_count: int = 0, impressions: int = 0):
         try:
-            # 1. Cloud Natural Language API を使って正確な感情スコアを取得
-            cloud_sentiment_score = 0.0
-            try:
-                document = language_v1.Document(
-                    content=text, 
-                    type_=language_v1.Document.Type.PLAIN_TEXT
-                )
-                sentiment_response = nl_client.analyze_sentiment(request={"document": document})
-                cloud_sentiment_score = float(sentiment_response.document_sentiment.score)
-            except Exception as nl_err:
-                print(f"Cloud Natural Language API Error (Post ID: {post_id}): {nl_err}")
-
-            # 2. Geminiによる要約および要素分解（一言見出し）の生成
-            prompt = f"""
-            以下の市民の投稿を「What（何が起きているか）」に絞って要素分解し、JSON形式のみで返してください（解説やマークダウンは不要）。
-
-            投稿内容: "{text}"
-
-            要件:
-            1. ai_summary: 20文字程度の一言で端的に表した見出し・タイトル要約
-            2. what_tree: 「対象」「問題」「影響」の階層を持つJSONオブジェクト（name と children）
-            3. base_priority: 0〜100の深刻度
-            4. tags: キーワードのリスト（2〜4個）
-            """
-            
-            response = client.models.generate_content(
-                model="gemini-3.6-flash",
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    response_mime_type="application/json"
-                )
+            # 1. Cloud Natural Language API による高度なテキスト解析
+            document = language_v1.Document(
+                content=text, 
+                type_=language_v1.Document.Type.PLAIN_TEXT
             )
             
-            response_text = response.text if response.text else "{}"
-            data = json.loads(response_text)
-            post_summary = data.get("ai_summary", text[:30])
+            # ① 感情分析（スコアとマグニチュード［熱量］を取得）
+            sentiment_response = nl_client.analyze_sentiment(request={"document": document})
+            sentiment = sentiment_response.document_sentiment
+            cloud_sentiment_score = float(sentiment.score)       # -1.0 (ネガティブ) 〜 1.0 (ポジティブ)
+            sentiment_magnitude = float(sentiment.magnitude)     # 感情の強さ・熱量 (0.0 〜 Inf)
 
-            base_priority = data.get("base_priority", data.get("priority_score", 50))
+            # ② エンティティ分析（地名、組織、固有名詞などを抽出）
+            entities_response = nl_client.analyze_entities(request={"document": document})
+            extracted_entities = [entity.name for entity in entities_response.entities]
             
+            # 2. CNL APIの分析結果から独自の指標を自動構築（Geminiの代わり）
+            # ネガティブ度が高いほど、また感情の熱量が高いほど優先度（深刻度）を高く設定
+            negativity = max(0.0, -cloud_sentiment_score) # 0.0 〜 1.0
+            magnitude_factor = min(10.0, sentiment_magnitude)
+            
+            # 0〜100のベース優先度を算出
+            base_priority = int((negativity * 70) + (magnitude_factor * 3))
+            base_priority = max(10, min(100, base_priority))
+
+            # 要約・見出しの自動生成（抽出されたエンティティやテキストを活用）
+            top_entity = extracted_entities[0] if extracted_entities else "市民意見"
+            post_summary = f"【{top_entity}】{text[:25]}..."
+            
+            # ロジックツリー（what_tree）の自動構築（エンティティ構造を反映）
+            sub_category = extracted_entities[1] if len(extracted_entities) > 1 else "一般課題"
+            what_tree = {
+                "name": top_entity,
+                "children": [
+                    {
+                        "name": sub_category,
+                        "children": [{"name": f"感情スコア: {cloud_sentiment_score:.2f} (熱量: {sentiment_magnitude:.1f})"}]
+                    }
+                ]
+            }
+
             final_priority = self._calculate_priority_with_ml(
                 ai_base_priority=base_priority,
                 likes=like_count,
@@ -92,7 +93,7 @@ class AnalysisEngine:
                 impressions=impressions
             )
 
-            # 3. ai_analysis_results テーブルへ保存（Natural Languageのスコアを採用）
+            # 3. ai_analysis_results テーブルへ保存
             analysis_data = {
                 "sns_post_id": post_id,
                 "is_valid_issue": True,
@@ -104,15 +105,15 @@ class AnalysisEngine:
             # 4. 課題カタログ（issue_catalog）および中間テーブルへの保存
             self._save_to_catalog(
                 post_id=post_id, 
-                tree_data=data.get("what_tree", {}), 
+                tree_data=what_tree, 
                 priority=final_priority, 
                 summary_text=post_summary
             )
             
-            print(f"Post ID: {post_id} のAI分析とMLエンゲージメント補正（優先度: {final_priority}）の保存が完了しました。")
+            print(f"Post ID: {post_id} のCloud NL分析とML補正（優先度: {final_priority}）の保存が完了しました。")
 
         except Exception as e:
-            print(f"AI Analysis Error (Post ID: {post_id}): {e}")
+            print(f"Cloud NL Analysis Error (Post ID: {post_id}): {e}")
 
     def _save_to_catalog(self, post_id: Any, tree_data: Dict[str, Any], priority: int, summary_text: str):
         try:
@@ -151,7 +152,6 @@ class AnalysisEngine:
 
     def analyze_posts_from_db(self):
         try:
-            # 新しい順（collected_at の降順）で取得
             response = self.supabase.table("sns_posts").select("*").order("collected_at", desc=True).execute()
             posts = response.data
 
@@ -178,7 +178,7 @@ class AnalysisEngine:
                 except (TypeError, ValueError):
                     replies = 0
                     
-                print(f"Post ID: {post_id} のAI分析を開始します...")
+                print(f"Post ID: {post_id} のCloud NL分析を開始します...")
                 
                 self.generate_analysis(
                     post_id=post_id,
@@ -206,52 +206,27 @@ class AnalysisEngine:
                 
                 issue_id = catalog.get("id")
                 main_cat = catalog.get("main_category")
-                sub_cat = catalog.get("sub_category")
-                summary = catalog.get("ai_summary")
-
+                
+                # 関連する投稿の感情スコアを集計してメタ分析の代わりとする
                 relations = self.supabase.table("issue_post_relations").select("sns_post_id").eq("issue_id", issue_id).execute()
                 post_ids = [r["sns_post_id"] for r in relations.data if isinstance(r, dict) and "sns_post_id" in r]
 
-                collected_texts = []
                 if post_ids:
-                    posts_res = self.supabase.table("sns_posts").select("post_text").in_("id", post_ids).execute()
-                    collected_texts = [p["post_text"] for p in posts_res.data if isinstance(p, dict) and "post_text" in p]
-
-                meta_prompt = f"""
-                以下は、市民から寄せられた「{main_cat}（{sub_cat}）」に関する複数の具体的な不満・意見です。
-                これらの声をメタ解析（横断的分析）し、行政として取り組むべき「根本的な構造的要因」や「政策的背景」を深く要素分解してください。
-                
-                集約された意見・要約:
-                - {summary}
-                - デバッグ用生データ抜粋: {json.dumps(collected_texts[:5], ensure_ascii=False)}
-                
-                要件（必ずJSON形式のみで返してください）:
-                1. structural_cause: この問題を引き起こしている根本的な制度的・構造的原因の要約（40〜60文字）
-                2. policy_recommendation: 行政が取るべき具体的な改善策やアプローチの提案
-                3. deeper_tree: さらに詳細な原因・影響・対策に分かれるロジックツリー構造 (name, children)
-                """
-
-                response = client.models.generate_content(
-                    model="gemini-3.6-flash",
-                    contents=meta_prompt,
-                    config=types.GenerateContentConfig(
-                        response_mime_type="application/json"
-                    )
-                )
-                
-                meta_data = json.loads(response.text if response.text else "{}")
-
-                self.supabase.table("issue_catalog").update({
-                    "ai_summary": f"【構造的要因】{meta_data.get('structural_cause', summary)}"
-                }).eq("id", issue_id).execute()
-
+                    analysis_res = self.supabase.table("ai_analysis_results").select("sentiment_score").in_("sns_post_id", post_ids).execute()
+            
+            # ★ 確実に float にキャストしてリスト内包表記にする
+            # ★ str() を挟むことで Pylance の JSON 型エラーを完全に回避
+            scores = [
+                float(str(a["sentiment_score"])) 
+                for a in analysis_res.data 
+                if isinstance(a, dict) and a.get("sentiment_score") is not None
+            ]
+            
+            avg_sentiment = sum(scores) / len(scores) if scores else 0.0
         except Exception as e:
             print(f"Meta Analysis Error: {e}")
     
 def analyze_sentiment_and_summary(text: str) -> dict:
-    """
-    リアルタイム検索時などに Cloud Natural Language API を使って感情分析を行う関数
-    """
     summary = text[:30] + ("..." if len(text) > 30 else "")
     sentiment_score = 0.0
     
@@ -269,7 +244,55 @@ def analyze_sentiment_and_summary(text: str) -> dict:
         "summary": summary,
         "sentiment_score": sentiment_score
     }
+class LocalTextClassifier:
+    def __init__(self):
+        # TF-IDF（単語の重要度計算）とロジスティック回帰をパイプライン化
+        self.model = Pipeline([
+            ('tfidf', TfidfVectorizer(max_features=1000, token_pattern=r'(?u)\b\w+\b')),
+            ('clf', LogisticRegression(random_state=42))
+        ])
+        self.is_trained = False
 
+    def train(self, texts: list, labels: list):
+        """
+        少量の教師データでモデルを学習させる
+        texts: 投稿文のリスト
+        labels: ラベルのリスト (例: "USEFUL", "NOISE")
+        """
+        if not texts:
+            return
+        self.model.fit(texts, labels)
+        self.is_trained = True
+        print(f"軽量MLモデルの学習が完了しました（学習データ数: {len(texts)}件）")
+
+    def predict(self, text: str) -> str:
+        """
+        新しいテキストのカテゴリを瞬時に予測する
+        """
+        if not self.is_trained:
+            return "UNKNOWN"
+        return str(self.model.predict([text])[0])
+
+# --- 使い方・動作イメージ ---
+if __name__ == "__main__":
+    classifier = LocalTextClassifier()
+    
+    # 仮の学習データ（実際には過去のデータや手動ラベル付けデータを使用）
+    sample_texts = [
+        "神戸市営地下鉄のダイヤ改正が不便すぎて最悪。改善してほしい。",
+        "今日のランチは三宮のカフェでパンケーキを食べました！", # ノイズ
+        "三宮駅前の再開発、工事長すぎて歩きにくいし危険。",
+        "おはようございます！今日もいい天気ですね。", # ノイズ
+    ]
+    sample_labels = ["USEFUL", "NOISE", "USEFUL", "NOISE"]
+    
+    # 学習の実行
+    classifier.train(sample_texts, sample_labels)
+    
+    # 新しい投稿の判定テスト
+    new_post = "バスが全然来なくて遅刻した、神戸市どうにかして"
+    result = classifier.predict(new_post)
+    print(f"判定結果: {result} -> 「{new_post}」")
 if __name__ == "__main__":
     engine = get_ai_engine()
     engine.analyze_posts_from_db()
