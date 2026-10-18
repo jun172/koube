@@ -5,8 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>神戸市SNS分析ダッシュボード</title>
     <link rel="icon" href="/static/imag.png" type="image/png">
-    <!-- D3.js -->
-    <script src="https://d3js.org/d3.v7.min.js"></script>
     
     <!-- CSSのパスを /static/... にする -->
     <style>
@@ -101,14 +99,8 @@
         .search-icon-button:hover { background: #9b9b9b; }
         .search-icon-button:active { transform: translateY(-50%) scale(0.95); }
 
-        /* ツリーコンテナ＆タブ */
+        /* ツリーコンテナ（要素分解用） */
         .tree-container { margin-top: 15px; padding: 15px; background-color: #171819; border-radius: 12px; border: 1px solid #444746; animation: expandDown 0.3s ease-out; overflow: hidden; }
-        .tree-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; overflow-x: auto; padding-bottom: 4px; }
-        .tree-tabs { display: flex; gap: 8px; flex-shrink: 0; }
-        .tree-tab-btn { background-color: #1e1f20; color: #aaa; border: 1px solid #444746; padding: 6px 14px; border-radius: 6px; font-size: 12px; cursor: pointer; transition: all 0.2s; white-space: nowrap; }
-        .tree-tab-btn:hover { color: #e3e3e3; border-color: #8ab4f8; }
-        .tree-tab-btn.active { background-color: #8ab4f8; color: #131314; font-weight: bold; border-color: #8ab4f8; }
-        .tree-canvas { width: 100%; display: flex; justify-content: center; min-height: 160px; overflow-x: auto; }
 
         /* 履歴アイテム */
         .history-item { display: flex; justify-content: space-between; align-items: center; padding: 8px 10px; border-radius: 6px; margin-bottom: 4px; transition: background 0.15s; }
@@ -202,10 +194,9 @@
                     <!-- JavaScriptで初期キーワードと追加フォームがここに描画されます -->
                 </div>
                 <div class="search-container">
-    <!-- onkeydown を修正し、イベントオブジェクト(event)を受け取って確実に制御する -->
                     <input type="text" id="searchInput" placeholder="分析キーワードを入力..." class="search-input" onkeydown="handleSearchKeyDown(event)">
-                            <button type="button" class="search-icon-button" onclick="executeSearch()">
-                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <button type="button" class="search-icon-button" onclick="executeSearch()">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                             <circle cx="11" cy="11" r="7" stroke="#dcdcdc" stroke-width="2.2"/>
                             <line x1="16.2" y1="16.2" x2="21" y2="21" stroke="#dcdcdc" stroke-width="2.2" stroke-linecap="round"/>
                         </svg>
@@ -236,13 +227,10 @@ window.onload = async function() {
         welcomeUser.textContent = `ようこそ、${name} さん`;
     }
 
-    // ★ ここでバックエンドからキーワードを取得して初期タグに反映（未設定の場合）
     if (!localStorage.getItem("customTags")) {
         try {
             const res = await fetch(`${API_BASE_URL}/api/keywords`);
             if (res.ok) {
-                const data = await res.json();
-                // 取得したデータからデフォルトタグを設定（例：神戸市や主要キーワード）
                 customTags = ['神戸市', '三宮', '不満', '道路'];
                 localStorage.setItem("customTags", JSON.stringify(customTags));
             }
@@ -274,19 +262,18 @@ window.onload = async function() {
     }
 };
 
-// キーボード入力時の安全なハンドラ
+// --- 検索バーの挙動制御（重複を完全に排除した安全な実装） ---
 function handleSearchKeyDown(event) {
     if (event.key === 'Enter') {
-        event.preventDefault(); // デフォルトの挙動やバブリングを完全ブロック
+        event.preventDefault(); // Enterキーのデフォルト動作や二重発火を完全にブロック
         executeSearch();
     }
 }
 
-// 検索実行関数の先頭に「実行中ガード」を追加して連打・勝手な二重送信を防止
 let isSearching = false;
 
 async function executeSearch() {
-    if (isSearching) return; // すでに検索中なら何もしない
+    if (isSearching) return; // 処理中の連打を防止
     
     const input = document.getElementById('searchInput');
     if (!input) return;
@@ -294,7 +281,7 @@ async function executeSearch() {
     const query = input.value.trim();
     if (!query) return;
 
-    isSearching = true; // ロック開始
+    isSearching = true;
 
     try {
         const response = await fetch(`${API_BASE_URL}/api/search?q=${encodeURIComponent(query)}`);
@@ -323,6 +310,7 @@ async function executeSearch() {
         isSearching = false; // 処理完了後にロック解除
     }
 }
+
 function toggleSidebar() {
     const sidebar = document.getElementById('sidebar');
     const overlay = document.getElementById('sidebarOverlay');
@@ -374,7 +362,6 @@ async function triggerXCollection() {
     }
 }
 
-// --- X収集の停止処理 ---
 async function stopXCollection() {
     try {
         const response = await fetch(`${API_BASE_URL}/api/stop-x`, {
@@ -432,7 +419,6 @@ async function triggerAiAnalysis() {
     }
 }
 
-// --- AI解析の停止処理 ---
 async function stopAiAnalysis() {
     try {
         const response = await fetch(`${API_BASE_URL}/api/stop-ai`, {
@@ -507,13 +493,13 @@ async function fetchAndRenderHistories() {
                             ${item.query}
                         </span>
                         <button onclick="deleteHistory(event, '${item.id}')" style="background: none; border: none; border-radius: 6px; cursor: pointer; color: #aaa; padding: 4px 6px; display: flex; align-items: center; transition: background 0.2s, color 0.2s;" onmouseover="this.style.background='rgba(239, 68, 68, 0.2)'; this.style.color='#ef4444';" onmouseout="this.style.background='none'; this.style.color='#aaa';" title="削除">
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                        <path d="M4 7H20" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-                        <path d="M6 7L7 20C7 20.5523 7.44772 21 8 21H16C16.5523 21 17 20.5523 17 20L18 7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                        <path d="M9 7V4C9 3.44772 9.44772 3 10 3H14C14.5523 3 15 3.44772 15 4V7" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-                        <path d="M10 11V17" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-                        <path d="M14 11V17" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-                        </svg>
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                <path d="M4 7H20" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                                <path d="M6 7L7 20C7 20.5523 7.44772 21 8 21H16C16.5523 21 17 20.5523 17 20L18 7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                                <path d="M9 7V4C9 3.44772 9.44772 3 10 3H14C14.5523 3 15 3.44772 15 4V7" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                                <path d="M10 11V17" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                                <path d="M14 11V17" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                            </svg>
                         </button>
                     </div>
                 `;
@@ -534,7 +520,6 @@ async function selectHistory(historyId) {
     }
 }
 
-// --- 投稿表示 & タブ切り替え関連 ---
 async function loadHistoryDetail(historyId) {
     try {
         const response = await fetch(`${API_BASE_URL}/api/history/${historyId}?sentiment=all`);
@@ -552,7 +537,7 @@ async function loadHistoryDetail(historyId) {
 
 async function switchSentimentTab(historyId, sentimentType) {
     if (!historyId) {
-        alert("履歴IDが見つからないため、フィルタリングできません。一度検索を行うか履歴を選択してください。");
+        alert("履歴IDが見つからないため、フィルタリングできません。");
         return;
     }
     try {
@@ -578,75 +563,67 @@ function renderPostsContainer(queryTitle, posts, currentTab = 'all', historyId =
     if (posts.length === 0) {
         postsHtml = `<p style="color:#aaa; font-size:13px; padding: 10px 0;">該当する投稿データが見つかりませんでした。</p>`;
     } else {
-        posts.forEach((post) => {
-        const textForTags = post.post_text || post.title || post.summary || '';
-        
-        // すべての投稿を要約として表示する（summaryがあればそれを使用、なければ原文の先頭を切り出して要約風にする）
-        const summaryText = post.summary ? post.summary : (textForTags.length > 50 ? textForTags.slice(0, 50) + '...' : textForTags);
-            
-        const tagsHtml = renderHashtags(textForTags);
+       posts.forEach((post) => {
+    const summaryText = post.summary || "要約なし";
+    // バックエンドから送られてきた実際の投稿文を取得（なければ要約を使用）
+    const originalText = post.post_text || post.title || summaryText;
+    
+    const tagsHtml = renderHashtags(originalText);
 
-        let dateStr = '';
-        if (post.collected_at) {
-            const dateObj = new Date(post.collected_at);
-            dateStr = `<span class="date-badge"> ${dateObj.toLocaleString()}</span>`;
-        }
-
-        // 感情スコアのバッジ生成ロジック
-        let sentimentBadge = '';
-        if (post.sentiment_score !== undefined && post.sentiment_score !== null) {
-            const sScore = parseFloat(post.sentiment_score);
-            let sColor = '#8ab4f8'; // 中立カラー（青系）
-            let sText = '中立';
-            
-            if (sScore > 0) {
-                sColor = '#81c995'; // ポジティブ（緑系）
-                sText = `ポジティブ (${sScore.toFixed(2)})`;
-            } else if (sScore < 0) {
-                sColor = '#f28b82'; // ネガティブ（赤系）
-                sText = `ネガティブ (${sScore.toFixed(2)})`;
-            }
-            sentimentBadge = `<span style="background: rgba(255,255,255,0.05); color: ${sColor}; border: 1px solid ${sColor}; padding: 2px 6px; border-radius: 4px; font-size: 10px;">${sText}</span>`;
-        }
-
-        postsHtml += `
-            <div class="post-item">
-                <div class="post-header" onclick="toggleLogicTree(this, '${post.id}')">
-                    <!-- すべて要約文として表示 -->
-                    <div class="post-summary">${summaryText}</div>
-                    ${tagsHtml}
-                    <div class="post-footer" style="display: flex; gap: 10px; align-items: center; margin-top: 8px; flex-wrap: wrap;">
-                        <span class="like-badge">❤ ${post.likes || 0} いいね</span>
-                        ${sentimentBadge}
-                        ${dateStr}
-                    </div>
-                </div>
-            </div>
-        `;
-    });
+    let dateStr = '';
+    if (post.collected_at) {
+        const dateObj = new Date(post.collected_at);
+        dateStr = `<span class="date-badge"> ${dateObj.toLocaleString()}</span>`;
     }
 
+    let sentimentBadge = '';
+    if (post.sentiment_score !== undefined && post.sentiment_score !== null) {
+        const sScore = parseFloat(post.sentiment_score);
+        let sColor = '#8ab4f8';
+        let sText = '中立';
+        
+        if (sScore > 0) {
+            sColor = '#81c995';
+            sText = `ポジティブ (${sScore.toFixed(2)})`;
+        } else if (sScore < 0) {
+            sColor = '#f28b82';
+            sText = `ネガティブ (${sScore.toFixed(2)})`;
+        }
+        sentimentBadge = `<span style="background: rgba(255,255,255,0.05); color: ${sColor}; border: 1px solid ${sColor}; padding: 2px 6px; border-radius: 4px; font-size: 10px;">${sText}</span>`;
+    }
+
+    postsHtml += `
+        <div class="post-item">
+            <div class="post-header" onclick="toggleLogicTree(this, '${post.id}')">
+                <!-- AIによる見出し要約 -->
+                <div class="post-summary" style="font-size: 15px; font-weight: bold; color: #8ab4f8; margin-bottom: 6px;">
+                    📌 ${summaryText}
+                </div>
+                <!-- 実際のsns_postsの投稿文を表示するエリア -->
+                <div class="post-original" style="background: #171819; padding: 10px 12px; border-radius: 8px; border-left: 3px solid #8ab4f8; color: #d0d0d0; font-size: 13px; line-height: 1.5; margin-bottom: 8px; word-break: break-all;">
+                    "${originalText}"
+                </div>
+                ${tagsHtml}
+                <div class="post-footer" style="display: flex; gap: 10px; align-items: center; margin-top: 8px; flex-wrap: wrap;">
+                    <span class="like-badge">❤ ${post.likes || 0} いいね</span>
+                    ${sentimentBadge}
+                    ${dateStr}
+                </div>
+            </div>
+        </div>
+    `;
+});
+    }
     const currentId = historyId || getCurrentHistoryId();
 
     displayArea.innerHTML = `
         <div class="analysis-card" style="width: 100%; box-sizing: border-box;">
-        <div style="display: flex; gap: 6px; margin-bottom: 16px;">
-            <button onclick="switchSentimentTab('${currentId}', 'all')" 
-                style="background: ${currentTab === 'all' ? '#8ab4f8' : '#222'}; color: ${currentTab === 'all' ? '#131314' : '#fff'}; font-weight: ${currentTab === 'all' ? 'bold' : 'normal'}; border: 1px solid ${currentTab === 'all' ? '#8ab4f8' : '#444'}; padding: 5px 10px; border-radius: 4px; font-size: 11px; cursor: pointer;"
-            >すべて</button>
-
-            <button onclick="switchSentimentTab('${currentId}', 'positive')" 
-                style="background: ${currentTab === 'positive' ? '#8ab4f8' : '#222'}; color: ${currentTab === 'positive' ? '#131314' : '#fff'}; font-weight: ${currentTab === 'positive' ? 'bold' : 'normal'}; border: 1px solid ${currentTab === 'positive' ? '#8ab4f8' : '#444'}; padding: 5px 10px; border-radius: 4px; font-size: 11px; cursor: pointer;"
-            >ポジティブ</button>
-
-            <button onclick="switchSentimentTab('${currentId}', 'neutral')" 
-                style="background: ${currentTab === 'neutral' ? '#8ab4f8' : '#222'}; color: ${currentTab === 'neutral' ? '#131314' : '#fff'}; font-weight: ${currentTab === 'neutral' ? 'bold' : 'normal'}; border: 1px solid ${currentTab === 'neutral' ? '#8ab4f8' : '#444'}; padding: 5px 10px; border-radius: 4px; font-size: 11px; cursor: pointer;"
-            >中立</button>
-
-            <button onclick="switchSentimentTab('${currentId}', 'negative')" 
-                style="background: ${currentTab === 'negative' ? '#8ab4f8' : '#222'}; color: ${currentTab === 'negative' ? '#131314' : '#fff'}; font-weight: ${currentTab === 'negative' ? 'bold' : 'normal'}; border: 1px solid ${currentTab === 'negative' ? '#8ab4f8' : '#444'}; padding: 5px 10px; border-radius: 4px; font-size: 11px; cursor: pointer;"
-            >ネガティブ</button>
-        </div>
+            <div style="display: flex; gap: 6px; margin-bottom: 16px;">
+                <button onclick="switchSentimentTab('${currentId}', 'all')" style="background: ${currentTab === 'all' ? '#8ab4f8' : '#222'}; color: ${currentTab === 'all' ? '#131314' : '#fff'}; font-weight: ${currentTab === 'all' ? 'bold' : 'normal'}; border: 1px solid ${currentTab === 'all' ? '#8ab4f8' : '#444'}; padding: 5px 10px; border-radius: 4px; font-size: 11px; cursor: pointer;">すべて</button>
+                <button onclick="switchSentimentTab('${currentId}', 'positive')" style="background: ${currentTab === 'positive' ? '#8ab4f8' : '#222'}; color: ${currentTab === 'positive' ? '#131314' : '#fff'}; font-weight: ${currentTab === 'positive' ? 'bold' : 'normal'}; border: 1px solid ${currentTab === 'positive' ? '#8ab4f8' : '#444'}; padding: 5px 10px; border-radius: 4px; font-size: 11px; cursor: pointer;">ポジティブ</button>
+                <button onclick="switchSentimentTab('${currentId}', 'neutral')" style="background: ${currentTab === 'neutral' ? '#8ab4f8' : '#222'}; color: ${currentTab === 'neutral' ? '#131314' : '#fff'}; font-weight: ${currentTab === 'neutral' ? 'bold' : 'normal'}; border: 1px solid ${currentTab === 'neutral' ? '#8ab4f8' : '#444'}; padding: 5px 10px; border-radius: 4px; font-size: 11px; cursor: pointer;">中立</button>
+                <button onclick="switchSentimentTab('${currentId}', 'negative')" style="background: ${currentTab === 'negative' ? '#8ab4f8' : '#222'}; color: ${currentTab === 'negative' ? '#131314' : '#fff'}; font-weight: ${currentTab === 'negative' ? 'bold' : 'normal'}; border: 1px solid ${currentTab === 'negative' ? '#8ab4f8' : '#444'}; padding: 5px 10px; border-radius: 4px; font-size: 11px; cursor: pointer;">ネガティブ</button>
+            </div>
             ${postsHtml}
         </div>
     `;
@@ -660,37 +637,6 @@ function getCurrentHistoryId() {
     }
     const urlParams = new URLSearchParams(window.location.search);
     return urlParams.get('id') || '';
-}
-
-async function executeSearch() {
-    const input = document.getElementById('searchInput');
-    const query = input.value.trim();
-    if(!query) return;
-
-    try {
-        const response = await fetch(`${API_BASE_URL}/api/search?q=${encodeURIComponent(query)}`);
-        const data = await response.json();
-
-        if (data.history_id) {
-            const newUrl = `/app/${data.history_id}`;
-            window.history.pushState({ path: newUrl }, '', newUrl);
-        }
-
-        currentQueryTitle = data.query || query;
-        currentPosts = data.results && data.results.posts ? data.results.posts : (data.posts || []);
-
-        const currentId = data.history_id || getCurrentHistoryId();
-        renderPostsContainer(currentQueryTitle, currentPosts, 'all', currentId);
-        
-        input.value = '';
-        const displayArea = document.getElementById('mainDisplayArea');
-        if (displayArea) displayArea.scrollTo({ top: displayArea.scrollHeight, behavior: 'smooth' });
-
-        await fetchAndRenderHistories();
-    } catch (error) {
-        console.error("検索データの取得に失敗しました:", error);
-        alert("サーバーとの通信に失敗しました。APIが起動しているか確認してください。");
-    }
 }
 
 function startNewChat() {
@@ -733,13 +679,11 @@ async function deleteHistory(event, historyId) {
     }
 }
 
-// --- tree.js 関連 ---
-async function drawTree(container, postId, treeType) {
-    const svgSelection = d3.select(container).select("svg");
-    
+// --- D3.jsを排除した軽量な要素分解（ツリー風HTML表示） ---
+async function renderSimpleTree(container, postId) {
     let rawData;
     try {
-        const response = await fetch(`${API_BASE_URL}/api/tree/${encodeURIComponent(postId)}/${encodeURIComponent(treeType)}`);
+        const response = await fetch(`${API_BASE_URL}/api/tree/${encodeURIComponent(postId)}/What`);
         rawData = await response.json();
 
         if (!rawData || !rawData.name) {
@@ -749,75 +693,27 @@ async function drawTree(container, postId, treeType) {
         rawData = { name: "データ取得エラー", children: [] };
     }
 
-    svgSelection.remove();
-    d3.select(container).selectAll("svg").remove();
-
-    const width = 750, height = 180;
+    let html = `<div style="font-size: 13px; color: #e3e3e3; padding: 4px;">`;
+    html += `<div style="font-weight: bold; color: #8ab4f8; margin-bottom: 8px;">📁 ${rawData.name}</div>`;
     
-    const svgElement = d3.select(container)
-        .append("svg")
-        .attr("width", "100%")
-        .attr("height", height)
-        .style("opacity", 0);
-
-    const zoom = d3.zoom()
-        .scaleExtent([0.5, 3])
-        .on("zoom", (event) => {
-            svgGroup.attr("transform", event.transform);
+    if (rawData.children && rawData.children.length > 0) {
+        html += `<ul style="margin: 0; padding-left: 20px; list-style-type: disc; display: flex; flex-direction: column; gap: 4px;">`;
+        rawData.children.forEach(child => {
+            html += `<li style="color: #c4c7c5;">${child.name}`;
+            if (child.children && child.children.length > 0) {
+                html += `<ul style="margin: 4px 0 0 0; padding-left: 20px; list-style-type: circle;">`;
+                child.children.forEach(grandChild => {
+                    html += `<li style="color: #9aa0a6; font-size: 12px;">${grandChild.name}</li>`;
+                });
+                html += `</ul>`;
+            }
+            html += `</li>`;
         });
+        html += `</ul>`;
+    }
+    html += `</div>`;
 
-    svgElement.call(zoom);
-
-    const svgGroup = svgElement.append("g")
-        .attr("transform", "translate(40,20)");
-
-    svgElement.transition()
-        .duration(300)
-        .style("opacity", 1);
-
-    const root = d3.hierarchy(rawData);
-    d3.tree().size([height - 40, width - 200])(root);
-
-    svgGroup.selectAll(".link")
-        .data(root.links())
-        .enter().append("path")
-        .attr("fill", "none")
-        .attr("stroke", "#8ab4f8")
-        .attr("stroke-width", 1.5)
-        .attr("opacity", 0.7)
-        .attr("d", d3.linkHorizontal().x(d => d.y).y(d => d.x));
-
-    const node = svgGroup.selectAll(".node")
-        .data(root.descendants())
-        .enter().append("g")
-        .attr("transform", d => `translate(${d.y},${d.x})`);
-
-    node.append("circle")
-        .attr("r", 0)
-        .attr("fill", "#ffffff")
-        .transition()
-        .duration(300)
-        .attr("r", 3.5);
-
-    node.append("text")
-        .attr("dy", 3)
-        .attr("x", 8)
-        .attr("font-size", "11px")
-        .attr("fill", "#e3e3e3")
-        .style("opacity", 0)
-        .text(d => d.data.name)
-        .transition()
-        .duration(300)
-        .style("opacity", 1);
-}
-
-function switchTreeTab(button, postId, treeType) {
-    const container = button.closest('.tree-container');
-    container.querySelectorAll('.tree-tab-btn').forEach(btn => btn.classList.remove('active'));
-    button.classList.add('active');
-
-    const canvas = container.querySelector('.tree-canvas');
-    drawTree(canvas, postId, treeType);
+    container.innerHTML = html;
 }
 
 function toggleLogicTree(headerElement, postId) {
@@ -834,18 +730,11 @@ function toggleLogicTree(headerElement, postId) {
 
     treeContainer = document.createElement('div');
     treeContainer.className = 'tree-container';
-    treeContainer.innerHTML = `
-        <div class="tree-header">
-            <div class="tree-tabs">
-                <button class="tree-tab-btn active" onclick="switchTreeTab(this, '${postId}', 'What')">要素分解</button>
-            </div>
-        </div>
-        <div class="tree-canvas"></div>
-    `;
+    treeContainer.innerHTML = `<div class="tree-canvas" style="min-height: auto; padding: 5px;"></div>`;
     parent.appendChild(treeContainer);
 
     const canvas = treeContainer.querySelector('.tree-canvas');
-    drawTree(canvas, postId, 'What');
+    renderSimpleTree(canvas, postId);
 }
 </script>
 </body>

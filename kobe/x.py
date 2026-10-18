@@ -3,55 +3,111 @@ import time
 import requests
 from datetime import datetime, timezone
 from typing import List, Dict
-from ai import * # ai.py を直接呼び出す
 from database import get_supabase_client  # データベース接続用
 from dotenv import load_dotenv
+import pandas as pd
 import re
 load_dotenv()  
 
 # X API設定
 X_API_BEARER_TOKEN = os.environ.get("X_API_BEARER_TOKEN")
-SEARCH_ENDPOINT = "https://api.twitter.com/2/tweets/search/all"
+SEARCH_ENDPOINT = "https://api.twitter.com/2/tweets/search/"
 
 class XPostClient:
-    def __init__(self):
+    def __init__(self, kobe_csv: str = "kobe.csv", station_csv: str = "kobe_stations.csv"):
         self.headers = {
             "Authorization": f"Bearer {X_API_BEARER_TOKEN}"
         }
         self.supabase = get_supabase_client()
-        # Ai.py 側のエンジンを初期化
-        self.ai_engine = get_ai_engine()
+        
+        # kobe.csv と kobe_stations.csv からエリア・町名・駅名を自動ロードしてセットを構築
+        self.kobe_keywords = self._load_kobe_areas(kobe_csv, station_csv)
+        
+        # 不満・若者言葉・スラング・インフラ不満キーワードのチェックリスト
+        # 不満・トラブル・インフラの困りごとに特化したキーワードリスト（誤検知防止版）
+        self.dissatisfaction_keywords = [
+            # 一般的な不満・批判表現
+            "不満", "不平", "オワコン", "終わってる", "無理", "しんどい", 
+            "クソ", "最悪", "勘弁", "改善して", "改善求める", "ダメだ", "ひどい", "酷い", 
+            "使えない", "不便", "改悪", "センスない", "何やってる", "税金の無駄",
+            
+            # 道路・インフラ・環境のトラブル
+            "道路の穴", "道路陥没", "陥没", "舗装が", "街灯が切れて", "街灯暗い", "街灯壊れ",
+            "ゴミ放置", "ゴミ屋敷", "不法投棄", "ポイ捨て", "悪臭", "異臭", "汚い", 
+            "放置自転車", "放置バイク", "雑草", "害虫", "騒音", "うるさい",
+            "子育て"
+        ]
 
-    def fetch_posts_by_keyword(self, keywords: List[str], operator: str = "AND", max_results: int = 50) -> List[Dict]:
+    def _load_kobe_areas(self, kobe_csv: str, station_csv: str) -> set:
         """
-        X APIを用いて指定キーワードの投稿を取得する
-        operator: "OR"（いずれかを含む） または "AND"（すべて含む）
+        kobe.csv（区・町名）と kobe_stations.csv（駅名）を読み込み、重複のない総合エリアキーワードセットを構築する
         """
-        # クリーニング処理
+        areas = set()
+        
+        # 1. kobe.csv の読み込み
+        try:
+            df_towns = pd.read_csv(kobe_csv)
+            for _, row in df_towns.iterrows():
+                city = str(row.get('city', '')).strip()
+                town = str(row.get('town', '')).strip()
+                
+                if city:
+                    areas.add(city)
+                    areas.add(city.replace("神戸市", "")) # 短縮形
+                if town and "以下に掲載がない場合" not in town:
+                    areas.add(town)
+            print(f"📌 {kobe_csv} から町名・区データをロードしました。")
+        except FileNotFoundError:
+            print(f"⚠️ 警告: {kobe_csv} が見つかりません。デフォルトの主要ワードを使用します。")
+            areas.update(["神戸", "神戸市", "中央区", "三宮", "元町"])
+
+        # 2. kobe_stations.csv の読み込み（station_name 列のみ）
+        try:
+            df_stations = pd.read_csv(station_csv)
+            for _, row in df_stations.iterrows():
+                station_name = str(row.get('station_name', '')).strip()
+                if station_name:
+                    areas.add(station_name)
+                    areas.add(f"{station_name}駅")
+            print(f"📌 {station_csv} から駅名データをロードしました。")
+        except FileNotFoundError:
+            print(f"⚠️ 警告: {station_csv} が見つかりません。")
+
+        # 通称・エイリアスの補強
+        areas.update(["ポートアイランド", "六甲アイランド", "港島", "三ノ宮", "ハーバーランド"])
+        
+        print(f"✅ 総合エリアキーワード総数: {len(areas)} 件")
+        return areas
+
+    def fetch_posts_by_keyword(self, keywords: List[str], operator: str = "OR", max_results: int = 10) -> List[Dict]:
+        """
+        X APIを用いて指定キーワードの投稿を取得する（取得件数を10件に設定）
+        """
         cleaned_words = [w.replace('"', '').replace("'", "").strip() for w in keywords if w.strip()]
         
         if not cleaned_words:
             return []
 
-        # キーワードを半角スペースで結合（X APIのAND条件仕様）
-        keyword_query = " ".join([f'"{w}"' for w in cleaned_words])
+        if operator.upper() == "OR":
+            keyword_query = " OR ".join([f'"{w}"' for w in cleaned_words])
+        else:
+            keyword_query = " ".join([f'"{w}"' for w in cleaned_words])
         
-        # 広告・スパム・PR・求人・アダルト等およびニュースbot系を除外するクエリ
         exclusions = [
             "-is:retweet", 
             "-PR", "-広告", "-宣伝", "-求人",
             "-AV", "-アダルト", "-風俗", "-マッチングアプリ",
-            "-has:links",      # ニュース記事やまとめサイトへのリンク付き投稿を除外
-            "-is:nullcast",    # 広告配信専用ツイートを除外
-            "-ニュース", "-速報", "-新聞" # ニュースbot系キーワードの除外
+            "-has:links",
+            "-is:nullcast",
+            "-ニュース", "-速報", "-新聞"
         ]
         
-        query = f'{keyword_query} {" ".join(exclusions)} lang:ja'
+        query = f'({keyword_query}) {" ".join(exclusions)} lang:ja'
         print(f"Starting collection with [{operator}] query: {query}")
 
         params = {
             "query": query,
-            "max_results": max_results,
+            "max_results": max_results, # 10件に制限
             "tweet.fields": "created_at,public_metrics,author_id",
             "user.fields": "public_metrics",
             "expansions": "author_id"
@@ -76,39 +132,26 @@ class XPostClient:
             for tweet in tweets:
                 text = tweet.get("text", "")
             
-                # 1. 地域キーワード（行政区・主要駅・スポットなど）の判定
-                kobe_keywords = [
-                    "神戸", "神戸市", "東灘区", "灘区", "中央区", "兵庫区", "長田区", "須磨区", "垂水区", "北区", "西区",
-                    "三宮", "三ノ宮", "元町", "新長田", "板宿", "名谷", "学園都市", "西神中央", "有馬", "六甲", "ポートアイランド",
-                    "神戸駅", "三ノ宮駅", "新神戸", "神戸空港"
-                ]
-                if not any(kw in text for kw in kobe_keywords):
+                # 1. ローカル辞書（kobe.csv & kobe_stations.csv）のエリア・町名・駅名キーワード判定
+                matched_area = next((kw for kw in self.kobe_keywords if kw in text), None)
+                if not matched_area:
                     continue
 
-                # 2. 不満・若者言葉・スラング（オワコン表現など）のチェック
-                # ※「神戸市」周辺の愚痴や不満、ネットスラングを含んでいるかを判定
-                dissatisfaction_keywords = [
-                    "不満", "不平", "オワコン", "終わってる", "終わってない", "無理", "しんどい", 
-                    "クソ", "ゴミ", "最悪", "勘弁", "改善", "ダメ", "ひどい", "酷い", 
-                    "使えない", "不便", "改悪", "センスない", "何やってる", "税金の無駄"
-                ]
+                # 2. 不満・ネガティブキーワード判定
+                matched_grievance = next((dk for dk in self.dissatisfaction_keywords if dk in text), None)
+                has_grievance = matched_grievance is not None
                 
-                # 地域名だけでなく、不満・若者言葉のニュアンスも含まれているかチェック（精度を劇的に上げるため）
-                has_grievance = any(dk in text for dk in dissatisfaction_keywords)
-                
-                # 3. テキスト長とスパム対策のフィルタリング（短い文字・長い文字の両方に対応）
+                # 3. テキスト長とスパム対策フィルタリング
                 clean_text = re.sub(r'https?://\S+|#\w+', '', text).strip()
                 clean_len = len(clean_text)
 
-                # 極端な短文（10文字未満）は除外
                 if clean_len < 10:
                     continue
 
-                # もし不満・若者言葉が含まれておらず、かつ文章が短い場合はノイズとして除外
-                if clean_len <= 35 and not has_grievance:
+                # ★文字数に関わらず、不満キーワードが含まれていない投稿をすべて除外する場合
+                if not has_grievance:
                     continue
 
-                # 改行多すぎスパムを除外
                 if text.count("\n") > 5:
                     continue
 
@@ -123,94 +166,57 @@ class XPostClient:
                     "collected_at": datetime.now(timezone.utc).isoformat(),
                 }
                 processed_posts.append(post_data)
-                print(f"保存対象 ({clean_len}文字): {text}")
+                print(f"保存対象 [一致エリア: {matched_area}, 不満ワード: {matched_grievance}] ({clean_len}文字): {text}")
 
             return processed_posts
 
         except Exception as e:
             print(f"Network/Connection Error in X.py: {e}")
             return []
-    def save_posts_to_db(self, posts: List[Dict]) -> List[Dict]:
+
+    def save_posts_to_db(self, posts: List[Dict]):
         """
-        取得した投稿を事前に sns_posts テーブルへ保存し、DB側で採番された主キーIDを安全に取得する
+        フィルタリングを通過した投稿を Supabase の sns_posts テーブルへ保存する（AI分析なし）
         """
-        saved_posts = []
+        saved_count = 0
         for post in posts:
             try:
-                post_id = None
-                
-                # 1. 既に同じ original_post_id が存在するかチェック
+                # 既に同じ original_post_id が存在するかチェック
                 existing = self.supabase.table("sns_posts").select("id").eq("original_post_id", post["original_post_id"]).execute()
                 
+                exists = False
                 if existing and getattr(existing, "data", None):
                     data_list = existing.data
                     if isinstance(data_list, list) and len(data_list) > 0:
-                        first_item = data_list[0]
-                        if isinstance(first_item, dict):
-                            post_id = first_item.get("id")
-                        else:
-                            post_id = getattr(first_item, "id", None)
+                        exists = True
                 
-                # 2. 存在しない場合は新規データを挿入
-                if not post_id:
-                    res = self.supabase.table("sns_posts").insert(post).execute()
-                    if res and getattr(res, "data", None):
-                        res_list = res.data
-                        if isinstance(res_list, list) and len(res_list) > 0:
-                            first_item = res_list[0]
-                            if isinstance(first_item, dict):
-                                post_id = first_item.get("id")
-                            else:
-                                post_id = getattr(first_item, "id", None)
-                
-                if not post_id:
-                    print(f"Skipping post {post['original_post_id']} due to missing DB ID.")
-                    continue
-                
-                post_copy = post.copy()
-                post_copy["db_id"] = post_id
-                saved_posts.append(post_copy)
-                
+                # 存在しない場合のみ新規挿入
+                if not exists:
+                    self.supabase.table("sns_posts").insert(post).execute()
+                    saved_count += 1
+                    print(f"💾 DB保存成功: {post['original_post_id']}")
+                else:
+                    print(f"⏩ 既存のためスキップ: {post['original_post_id']}")
+                    
             except Exception as e:
-                print(f"sns_posts Insert Error for {post.get('original_post_id')}: {e}")
+                print(f"❌ sns_posts Insert Error for {post.get('original_post_id')}: {e}")
                 
-        return saved_posts
-    
-    def send_to_ai(self, posts: List[Dict]):
-        """
-        sns_posts テーブルへ保存完了後、そのIDを紐づけてAi.pyへ分析を実行させる
-        """
-        saved_posts = self.save_posts_to_db(posts)
-        
-        for post in saved_posts:
-            try:
-                print(f"-> AIへデータを送信中 (DB ID: {post['db_id']}, Original ID: {post['original_post_id']})")
-                
-                self.ai_engine.generate_analysis(
-                    post_id=post["db_id"],
-                    text=post["post_text"],
-                    like_count=post["likes_count"],
-                    reply_count=post["replies_count"]
-                )
-            except Exception as e:
-                print(f"AI Processing Error: {e}")
-                
+        print(f"📊 データベース保存処理完了: 新規 {saved_count} 件を保存しました。")
+
     def run_collection_task(self, keywords: List[str], operator: str = "OR"):
-        """
-        外から渡されたキーワードのリストを使ってデータ収集を実行する
-        """
-        print(f"X (Twitter) データ収集およびAI連携タスクを開始します... キーワード: {keywords}")
+        print(f"X (Twitter) データ収集タスクを開始します... キーワード: {keywords} (演算子: {operator})")
         
-        # 渡されたキーワードリストを使って検索
-        posts = self.fetch_posts_by_keyword(keywords, operator=operator)
+        # 10件に制限して取得
+        posts = self.fetch_posts_by_keyword(keywords, operator=operator, max_results=10)
         if posts:
-            self.send_to_ai(posts)
+            # データベースへ直接保存（AI分析はバイパス）
+            self.save_posts_to_db(posts)
+        else:
+            print("条件に一致する新規投稿はありませんでした。")
             
         print("すべての処理が完了しました。")
         
 if __name__ == "__main__":
     client = XPostClient()
-    test_keywords = ["神戸市","オワコン"]
+    test_keywords = ["神戸　不満"]
     client.run_collection_task(keywords=test_keywords, operator="OR")
-    print("=== AND検索を実行==")
-    client.run_collection_task(keywords=test_keywords,operator="AND")

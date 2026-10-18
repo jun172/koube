@@ -304,7 +304,6 @@ def serve_reset2():
 @app.get("/api/search")
 def search_issues(q: str = Query(..., description="検索キーワード")):
     try:
-        # まず通常のキーワード検索を行う
         response = supabase.table("sns_posts").select(
             "id, platform, post_text, likes_count, collected_at"
         ).ilike("post_text", f"%{q}%").order("collected_at", desc=True).execute()
@@ -316,12 +315,10 @@ def search_issues(q: str = Query(..., description="検索キーワード")):
                     post_id = post_info.get("id")
                     text = str(post_info.get("post_text") or "")
                     
-                    # --- ★ノイズ（店舗オープン、日常の料理、イベント等）の簡易キーワードブロック ---
                     noise_keywords = ["オープン", "開店", "新店", "ご紹介", "作ってみた", "調理", "実験", "体験", "美味しかっ", "旅行", "ランチ", "カフェ"]
                     if any(nk in text for nk in noise_keywords):
-                        continue  # ノイズワードが含まれていれば結果から除外
+                        continue
                     
-                    # デフォルトの要約（原文の先頭）
                     summary_text = text[:40] + ("..." if len(text) > 40 else "")
                     
                     try:
@@ -341,7 +338,6 @@ def search_issues(q: str = Query(..., description="検索キーワード")):
                     except Exception as sum_err:
                         print(f"Summary fetch error: {sum_err}")
 
-                    # 感情スコアの取得
                     sentiment_score = 0.0
                     try:
                         analysis_res = supabase.table("ai_analysis_results").select("sentiment_score").eq("sns_post_id", post_id).execute()
@@ -358,9 +354,11 @@ def search_issues(q: str = Query(..., description="検索キーワード")):
                     if abs(sentiment_score) > THRESHOLD:
                         continue
 
+                    # ★ post_text (実際の投稿文) をレスポンスに追加！
                     posts.append({
                         "id": post_id,
                         "summary": summary_text,
+                        "post_text": text,
                         "likes": post_info.get("likes_count", 0),
                         "topic_key": post_info.get("platform", "X"),
                         "collected_at": post_info.get("collected_at"),
@@ -378,92 +376,6 @@ def search_issues(q: str = Query(..., description="検索キーワード")):
             print(f"History save error (non-fatal): {insert_err}")
             
         return {"query": q, "history_id": history_id, "posts": posts}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-# ロジックツリーデータ取得API
-@app.get("/api/tree/{post_id}/{tree_type}")
-def get_d3_tree_data(post_id: str, tree_type: str):
-    try:
-        # 1. いいね数を取得（投稿文は取得・使用しない）
-        likes = 0
-        post_res = supabase.table("sns_posts").select("likes_count").eq("id", post_id).execute()
-        if post_res.data and isinstance(post_res.data, list) and len(post_res.data) > 0:
-            first_post = post_res.data[0]
-            if isinstance(first_post, dict):
-                try:
-                    raw_likes = first_post.get("likes_count", 0)
-                    likes = int(str(raw_likes)) 
-                except (TypeError, ValueError):
-                    likes = 0
-
-        # 2. 課題カタログ（issue_catalog）または分析結果を取得
-        relation_res = supabase.table("issue_post_relations").select("issue_id").eq("sns_post_id", post_id).execute()
-        
-        main_c = "一般課題"
-        sub_c = "詳細分類"
-        detail_c = "個別要件"
-        summary = "要約なし"
-        sentiment = 0.0
-        priority = 50
-
-        if relation_res.data and isinstance(relation_res.data, list) and len(relation_res.data) > 0:
-            first_rel = relation_res.data[0]
-            if isinstance(first_rel, dict):
-                issue_id = first_rel.get("issue_id")
-                if issue_id is not None:
-                    catalog_res = supabase.table("issue_catalog").select("*").eq("id", issue_id).execute()
-                    if catalog_res.data and isinstance(catalog_res.data, list) and len(catalog_res.data) > 0:
-                        cat = catalog_res.data[0]
-                        if isinstance(cat, dict):
-                            main_c = str(cat.get("main_category", "一般課題"))
-                            sub_c = str(cat.get("sub_category", "詳細分類"))
-                            detail_c = str(cat.get("detail_category", "個別要件"))
-                            summary = str(cat.get("ai_summary", "要約なし"))
-
-        # 分析結果からスコア等を安全に取得
-        analysis_res = supabase.table("ai_analysis_results").select("*").eq("sns_post_id", post_id).execute()
-        if analysis_res.data and isinstance(analysis_res.data, list) and len(analysis_res.data) > 0:
-            row = analysis_res.data[0]
-            if isinstance(row, dict):
-                raw_sent = row.get("sentiment_score", 0.0)
-                try:
-                    sentiment = float(raw_sent) # type: ignore
-                except (TypeError, ValueError):
-                    sentiment = 0.0
-
-                raw_prio = row.get("priority_score", 50)
-                try:
-                    priority = int(raw_prio) # type: ignore
-                except (TypeError, ValueError):
-                    priority = 50
-
-        # 3. 投稿文をなくし、メインカテゴリー・AI要約・評価の枝だけに整理した構造
-        children = [
-            {
-                "name": main_c,
-                "children": [
-                    {"name": detail_c}
-                ]
-            },
-            {
-                "name": "AI要約",
-                "children": [
-                    {"name": summary}
-                ]
-            },
-            {
-                "name": "評価",
-                "children": [
-                    {"name": f"深刻度: {priority} / いいね: {likes}"}
-                ]
-            }
-        ]
-        
-        return {
-            "name": "要素分類",  # ルートのラベルをスッキリとした名前に変更
-            "children": children
-        }
-
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
