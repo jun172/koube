@@ -1,15 +1,19 @@
 import os
 import json
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from dotenv import load_dotenv
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import LogisticRegression
 from sklearn.pipeline import Pipeline
 # ★ Google Cloud Natural Language API のインポート
 from google.cloud import language_v1
+# ★ 新しい Google GenAI SDK のインポート
+from google import genai
 
 from sklearn.preprocessing import MinMaxScaler
 import numpy as np
+import pandas as pd
+import re
 
 # database.py から必要な保存関数をインポートする
 from database import *
@@ -20,6 +24,9 @@ load_dotenv()
 # Google Cloud Natural Language クライアントの初期化
 nl_client = language_v1.LanguageServiceClient()
 
+# 新しい SDK での Gemini クライアント初期化（自動で GEMINI_API_KEY を読み込みます）
+gemini_client = genai.Client()
+
 _engine = None
 
 def get_ai_engine():
@@ -28,10 +35,137 @@ def get_ai_engine():
         _engine = AnalysisEngine()
     return _engine
 
+
+class HybridRegionalClassifier:
+    """
+    キーワードマッチ（高速）と Gemini AI（文脈推論）を組み合わせたハイブリッド地域分類クラス
+    """
+    def __init__(self, master_csv: str = "kobe_keywords_master.csv"):
+        self.kobe_keywords = set()
+        self.ward_mapping = {}
+        self._load_master(master_csv)
+
+    def _load_master(self, kobe_csv: str = "kobe.csv", stations_csv: str = "kobe_stations.csv"):
+        self.ward_mapping = {} # キーワード -> 区名 の辞書
+        self.kobe_keywords = set()
+
+        try:
+            # 1. kobe.csv（行政区と町名）を読み込む
+            df_kobe = pd.read_csv(kobe_csv)
+            for _, row in df_kobe.iterrows():
+                city = str(row.get('city', '')).strip() # 例: 神戸市東灘区
+                town = str(row.get('town', '')).strip() # 例: 魚崎中町
+                
+                if town and town != "nan" and "以下に掲載がない場合" not in town:
+                    # 町名キーワードを登録
+                    self.kobe_keywords.add(town)
+                    self.ward_mapping[town] = city
+                
+                if city and city != "nan":
+                    # 区名自体も登録
+                    self.kobe_keywords.add(city)
+                    self.ward_mapping[city] = city
+
+            # 2. kobe_stations.csv（駅名）を読み込む
+            df_stations = pd.read_csv(stations_csv)
+            for _, row in df_stations.iterrows():
+                station = str(row.get('station_name', '')).strip()
+                if station and station != "nan":
+                    self.kobe_keywords.add(station)
+                    # 駅名から所属する区を自動推測・マッピング（例: 三宮・元町なら中央区、上沢なら兵庫区など）
+                    if station in ["三宮", "元町", "三ノ宮", "神戸", "高速神戸", "新神戸", "県庁前", "花隈", "ポートターミナル"]:
+                        self.ward_mapping[station] = "神戸市中央区"
+                    elif station in ["上沢", "新開地", "大倉山", "兵庫"]:
+                        self.ward_mapping[station] = "神戸市兵庫区"
+                    elif station in ["長田", "高速長田", "西代"]:
+                        self.ward_mapping[station] = "神戸市長田区"
+                    elif station in ["新長田"]:
+                        self.ward_mapping[station] = "神戸市長田区" # （または一部長田/須磨）
+                    else:
+                        # その他の駅も必要に応じて区を紐付ける、またはデフォルト中央区等に
+                        self.ward_mapping[station] = "神戸市中央区" 
+
+            print(f"📌 正規マスタから地域・駅キーワード合計 {len(self.kobe_keywords)} 件をロードしました。")
+        except Exception as e:
+            print(f"⚠️ マスタ読み込みエラー: {e}")
+
+    def classify_text(self, text: str) -> Dict[str, Any]:
+        """
+        1. まずキーワードマッチを試す
+        2. ヒットしなかった場合は Gemini AI に文脈から推測させる
+        """
+        # Step 1: キーワードマッチング
+        matched_keyword = next((kw for kw in self.kobe_keywords if kw in text), None)
+        if matched_keyword:
+            ward = self.ward_mapping.get(matched_keyword, "神戸市内")
+            return {
+                "matched_area": matched_keyword,
+                "ward": ward,
+                "is_kobe_related": True,
+                "method": "keyword"
+            }
+            
+        # Step 2: キーワードにない場合は Gemini AI による文脈推測（フォールバック）
+        return self._classify_with_gemini(text)
+
+    def _classify_with_gemini(self, text: str) -> Dict[str, Any]:
+        prompt = f"""
+                    以下のSNS投稿テキストは、兵庫県神戸市に関する市民の意見や日常のつぶやきです。
+                    テキスト内に地名が一切含まれていなくても、文脈、トピック、言葉遣いから、**神戸市内の9区（東灘区、灘区、兵庫区、長田区、須磨区、垂水区、北区、中央区、西区）のどこに関連が深いか**を必ず1つだけ選んで推測してください。
+
+                    【テキスト】
+                    "{text}"
+
+                    【絶対条件】
+                    1. 「その他」や「不明」という判定は一切禁止です。必ずいずれかの行政区を選んでください。
+                    2. 特定の区が判断できない一般的な日常の話題や街のつぶやきの大部分は、最も中心地である「神戸市中央区」およびエリア名「三宮・元町周辺」として扱ってください。
+                    3. 必ず以下のJSON形式のフォーマットでのみ回答してください（Markdownのバッククォート ```json などは付けず、純粋なJSON文字列のみを返してください）。
+
+                    {{
+                    "ward": "神戸市〇〇区（例: 神戸市中央区, 神戸市北区, 神戸市東灘区 など）",
+                    "matched_area": "詳細エリア名またはトピック（例: 三宮, 元町, 三宮周辺の飲食店, 街の意見 など）",
+                    "is_kobe_related": true
+                    }}
+                    """
+        try:
+            if not gemini_client or not hasattr(gemini_client, "models"):
+                raise Exception("Gemini client is not initialized properly.")
+
+            response = gemini_client.models.generate_content(
+                model='gemini-3.8-flash',
+                contents=prompt,
+            )
+            
+            if not response or not response.text:
+                raise Exception("Empty response from Gemini")
+
+            clean_text = response.text.strip()
+            
+            if clean_text.startswith("```json"):
+                clean_text = clean_text[7:]
+            if clean_text.startswith("```"):
+                clean_text = clean_text[3:]
+            if clean_text.endswith("```"):
+                clean_text = clean_text[:-3]
+                
+            data = json.loads(clean_text.strip())
+            data["method"] = "gemini"
+            return data
+        except Exception as e:
+            print(f"Gemini Classification Error: {e}")
+            # エラー時も「その他」にせず中央区・三宮として救済する
+            return {
+                "matched_area": "三宮・周辺エリア",
+                "ward": "神戸市中央区",
+                "is_kobe_related": True,
+                "method": "fallback"
+            }
+
 class AnalysisEngine:
     def __init__(self):
         self.supabase = get_supabase_client()
         self.scaler = MinMaxScaler(feature_range=(0, 1))
+        self.regional_classifier = HybridRegionalClassifier()
 
     def _calculate_priority_with_ml(self, ai_base_priority: int, likes: int, replies: int, impressions: int) -> int:
         raw_features = np.array([[float(likes), float(replies), float(impressions)]])
@@ -45,37 +179,33 @@ class AnalysisEngine:
 
     def generate_analysis(self, post_id: Any, text: str, like_count: int, reply_count: int = 0, impressions: int = 0):
         try:
-            # 1. Cloud Natural Language API による高度なテキスト解析
+            region_info = self.regional_classifier.classify_text(text)
+            matched_area = region_info.get("matched_area")
+            ward = region_info.get("ward")
+
             document = language_v1.Document(
                 content=text, 
                 type_=language_v1.Document.Type.PLAIN_TEXT
             )
             
-            # ① 感情分析（スコアとマグニチュード［熱量］を取得）
             sentiment_response = nl_client.analyze_sentiment(request={"document": document})
             sentiment = sentiment_response.document_sentiment
-            cloud_sentiment_score = float(sentiment.score)       # -1.0 (ネガティブ) 〜 1.0 (ポジティブ)
-            sentiment_magnitude = float(sentiment.magnitude)     # 感情の強さ・熱量 (0.0 〜 Inf)
+            cloud_sentiment_score = float(sentiment.score)       
+            sentiment_magnitude = float(sentiment.magnitude)     
 
-            # ② エンティティ分析（地名、組織、固有名詞などを抽出）
             entities_response = nl_client.analyze_entities(request={"document": document})
             extracted_entities = [entity.name for entity in entities_response.entities]
             
-            # 2. CNL APIの分析結果から独自の指標を自動構築（Geminiの代わり）
-            # ネガティブ度が高いほど、また感情の熱量が高いほど優先度（深刻度）を高く設定
-            negativity = max(0.0, -cloud_sentiment_score) # 0.0 〜 1.0
+            negativity = max(0.0, -cloud_sentiment_score) 
             magnitude_factor = min(10.0, sentiment_magnitude)
             
-            # 0〜100のベース優先度を算出
             base_priority = int((negativity * 70) + (magnitude_factor * 3))
             base_priority = max(10, min(100, base_priority))
 
-            # 要約・見出しの自動生成（抽出されたエンティティやテキストを活用）
-            top_entity = extracted_entities[0] if extracted_entities else "市民意見"
+            top_entity = matched_area if matched_area else (extracted_entities[0] if extracted_entities else "市民意見")
             post_summary = f"【{top_entity}】{text[:25]}..."
             
-            # ロジックツリー（what_tree）の自動構築（エンティティ構造を反映）
-            sub_category = extracted_entities[1] if len(extracted_entities) > 1 else "一般課題"
+            sub_category = ward if ward else (extracted_entities[1] if len(extracted_entities) > 1 else "一般課題")
             what_tree = {
                 "name": top_entity,
                 "children": [
@@ -93,7 +223,6 @@ class AnalysisEngine:
                 impressions=impressions
             )
 
-            # 3. ai_analysis_results テーブルへ保存
             analysis_data = {
                 "sns_post_id": post_id,
                 "is_valid_issue": True,
@@ -102,7 +231,6 @@ class AnalysisEngine:
             }
             insert_ai_analysis(analysis_data)
 
-            # 4. 課題カタログ（issue_catalog）および中間テーブルへの保存
             self._save_to_catalog(
                 post_id=post_id, 
                 tree_data=what_tree, 
@@ -110,7 +238,7 @@ class AnalysisEngine:
                 summary_text=post_summary
             )
             
-            print(f"Post ID: {post_id} のCloud NL分析とML補正（優先度: {final_priority}）の保存が完了しました。")
+            print(f"Post ID: {post_id} [地域: {matched_area} / 区: {ward} (by {region_info.get('method')})] の分析・保存完了")
 
         except Exception as e:
             print(f"Cloud NL Analysis Error (Post ID: {post_id}): {e}")
@@ -178,7 +306,7 @@ class AnalysisEngine:
                 except (TypeError, ValueError):
                     replies = 0
                     
-                print(f"Post ID: {post_id} のCloud NL分析を開始します...")
+                print(f"Post ID: {post_id} の地域分類 & AI分析を開始します...")
                 
                 self.generate_analysis(
                     post_id=post_id,
@@ -191,6 +319,51 @@ class AnalysisEngine:
         except Exception as e:
             print(f"DB Fetch & Analysis Error: {e}")
 
+    def analyze_town_breakdown(self):
+        try:
+            response = self.supabase.table("sns_posts").select("post_text").execute()
+            posts = response.data
+            if not posts:
+                print("集計対象の投稿がありません。")
+                return
+
+            ward_counts = {}
+            town_counts = {}
+
+            for p in posts:
+                if not isinstance(p, dict):
+                    continue
+                text = str(p.get("post_text") or "")
+                
+                res = self.regional_classifier.classify_text(text)
+                
+                if isinstance(res, dict):
+                    ward = res.get("ward") or "その他・分類不能"
+                    town = res.get("matched_area") or "その他・主要駅"
+                else:
+                    ward = "その他・分類不能"
+                    town = "その他・主要駅"
+
+                if str(ward) == "None" or not ward:
+                    ward = "その他・分類不能"
+                if str(town) == "None" or not town:
+                    town = "その他・主要駅"
+
+                ward_counts[ward] = ward_counts.get(ward, 0) + 1
+                town_counts[town] = town_counts.get(town, 0) + 1
+
+            print("\n📊 【行政区別 投稿件数集計】")
+            for w, count in sorted(ward_counts.items(), key=lambda x: x[1], reverse=True):
+                print(f"  - {w}: {count} 件")
+
+            print("\n📍 【町名・詳細エリア別 投稿件数集計（上位）】")
+            sorted_towns = sorted(town_counts.items(), key=lambda x: x[1], reverse=True)
+            for t, count in sorted_towns[:10]:
+                print(f"  - {t}: {count} 件")
+
+        except Exception as e:
+            print(f"Town Breakdown Analysis Error: {e}")
+            
     def analyze_issue_catalog_aggregation(self):
         try:
             response = self.supabase.table("issue_catalog").select("*").execute()
@@ -205,17 +378,13 @@ class AnalysisEngine:
                     continue
                 
                 issue_id = catalog.get("id")
-                main_cat = catalog.get("main_category")
                 
-                # 関連する投稿の感情スコアを集計してメタ分析の代わりとする
                 relations = self.supabase.table("issue_post_relations").select("sns_post_id").eq("issue_id", issue_id).execute()
                 post_ids = [r["sns_post_id"] for r in relations.data if isinstance(r, dict) and "sns_post_id" in r]
 
                 if post_ids:
                     analysis_res = self.supabase.table("ai_analysis_results").select("sentiment_score").in_("sns_post_id", post_ids).execute()
             
-            # ★ 確実に float にキャストしてリスト内包表記にする
-            # ★ str() を挟むことで Pylance の JSON 型エラーを完全に回避
             scores = [
                 float(str(a["sentiment_score"])) 
                 for a in analysis_res.data 
@@ -225,74 +394,9 @@ class AnalysisEngine:
             avg_sentiment = sum(scores) / len(scores) if scores else 0.0
         except Exception as e:
             print(f"Meta Analysis Error: {e}")
-    
-def analyze_sentiment_and_summary(text: str) -> dict:
-    summary = text[:30] + ("..." if len(text) > 30 else "")
-    sentiment_score = 0.0
-    
-    try:
-        document = language_v1.Document(
-            content=text,
-            type_=language_v1.Document.Type.PLAIN_TEXT
-        )
-        sentiment_response = nl_client.analyze_sentiment(request={"document": document})
-        sentiment_score = float(sentiment_response.document_sentiment.score)
-    except Exception as e:
-        print(f"Realtime Sentiment Analysis Error: {e}")
-    
-    return {
-        "summary": summary,
-        "sentiment_score": sentiment_score
-    }
-class LocalTextClassifier:
-    def __init__(self):
-        # TF-IDF（単語の重要度計算）とロジスティック回帰をパイプライン化
-        self.model = Pipeline([
-            ('tfidf', TfidfVectorizer(max_features=1000, token_pattern=r'(?u)\b\w+\b')),
-            ('clf', LogisticRegression(random_state=42))
-        ])
-        self.is_trained = False
 
-    def train(self, texts: list, labels: list):
-        """
-        少量の教師データでモデルを学習させる
-        texts: 投稿文のリスト
-        labels: ラベルのリスト (例: "USEFUL", "NOISE")
-        """
-        if not texts:
-            return
-        self.model.fit(texts, labels)
-        self.is_trained = True
-        print(f"軽量MLモデルの学習が完了しました（学習データ数: {len(texts)}件）")
 
-    def predict(self, text: str) -> str:
-        """
-        新しいテキストのカテゴリを瞬時に予測する
-        """
-        if not self.is_trained:
-            return "UNKNOWN"
-        return str(self.model.predict([text])[0])
-
-# --- 使い方・動作イメージ ---
-if __name__ == "__main__":
-    classifier = LocalTextClassifier()
-    
-    # 仮の学習データ（実際には過去のデータや手動ラベル付けデータを使用）
-    sample_texts = [
-        "神戸市営地下鉄のダイヤ改正が不便すぎて最悪。改善してほしい。",
-        "今日のランチは三宮のカフェでパンケーキを食べました！", # ノイズ
-        "三宮駅前の再開発、工事長すぎて歩きにくいし危険。",
-        "おはようございます！今日もいい天気ですね。", # ノイズ
-    ]
-    sample_labels = ["USEFUL", "NOISE", "USEFUL", "NOISE"]
-    
-    # 学習の実行
-    classifier.train(sample_texts, sample_labels)
-    
-    # 新しい投稿の判定テスト
-    new_post = "バスが全然来なくて遅刻した、神戸市どうにかして"
-    result = classifier.predict(new_post)
-    print(f"判定結果: {result} -> 「{new_post}」")
 if __name__ == "__main__":
     engine = get_ai_engine()
     engine.analyze_posts_from_db()
+    engine.analyze_town_breakdown()
