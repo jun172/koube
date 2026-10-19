@@ -24,7 +24,7 @@ load_dotenv()
 # Google Cloud Natural Language クライアントの初期化
 nl_client = language_v1.LanguageServiceClient()
 
-# 新しい SDK での Gemini クライアント初期化（自動で GEMINI_API_KEY を読み込みます）
+# 新しい SDK での Gemini クライアント初期化
 gemini_client = genai.Client()
 
 _engine = None
@@ -38,7 +38,7 @@ def get_ai_engine():
 
 class HybridRegionalClassifier:
     """
-    キーワードマッチ（高速）と Gemini AI（文脈推論）を組み合わせたハイブリッド地域分類クラス
+    キーワードマッチ（高速）と Gemini AI（文脈・関連性推論）を組み合わせたハイブリッド地域分類クラス
     """
     def __init__(self, master_csv: str = "kobe_keywords_master.csv"):
         self.kobe_keywords = set()
@@ -53,16 +53,14 @@ class HybridRegionalClassifier:
             # 1. kobe.csv（行政区と町名）を読み込む
             df_kobe = pd.read_csv(kobe_csv)
             for _, row in df_kobe.iterrows():
-                city = str(row.get('city', '')).strip() # 例: 神戸市東灘区
-                town = str(row.get('town', '')).strip() # 例: 魚崎中町
+                city = str(row.get('city', '')).strip() 
+                town = str(row.get('town', '')).strip() 
                 
                 if town and town != "nan" and "以下に掲載がない場合" not in town:
-                    # 町名キーワードを登録
                     self.kobe_keywords.add(town)
                     self.ward_mapping[town] = city
                 
                 if city and city != "nan":
-                    # 区名自体も登録
                     self.kobe_keywords.add(city)
                     self.ward_mapping[city] = city
 
@@ -72,7 +70,6 @@ class HybridRegionalClassifier:
                 station = str(row.get('station_name', '')).strip()
                 if station and station != "nan":
                     self.kobe_keywords.add(station)
-                    # 駅名から所属する区を自動推測・マッピング（例: 三宮・元町なら中央区、上沢なら兵庫区など）
                     if station in ["三宮", "元町", "三ノ宮", "神戸", "高速神戸", "新神戸", "県庁前", "花隈", "ポートターミナル"]:
                         self.ward_mapping[station] = "神戸市中央区"
                     elif station in ["上沢", "新開地", "大倉山", "兵庫"]:
@@ -80,9 +77,8 @@ class HybridRegionalClassifier:
                     elif station in ["長田", "高速長田", "西代"]:
                         self.ward_mapping[station] = "神戸市長田区"
                     elif station in ["新長田"]:
-                        self.ward_mapping[station] = "神戸市長田区" # （または一部長田/須磨）
+                        self.ward_mapping[station] = "神戸市長田区"
                     else:
-                        # その他の駅も必要に応じて区を紐付ける、またはデフォルト中央区等に
                         self.ward_mapping[station] = "神戸市中央区" 
 
             print(f"📌 正規マスタから地域・駅キーワード合計 {len(self.kobe_keywords)} 件をロードしました。")
@@ -91,48 +87,45 @@ class HybridRegionalClassifier:
 
     def classify_text(self, text: str) -> Dict[str, Any]:
         """
-        1. まずキーワードマッチを試す
-        2. ヒットしなかった場合は Gemini AI に文脈から推測させる
+        1. キーワードマッチを試す
+        2. ヒットした場合も、単なる個人の日常私的ツイート（無関係な話題）でないかをGeminiで厳密にチェックまたはAIフォールバックへ
         """
         # Step 1: キーワードマッチング
         matched_keyword = next((kw for kw in self.kobe_keywords if kw in text), None)
-        if matched_keyword:
-            ward = self.ward_mapping.get(matched_keyword, "神戸市内")
-            return {
-                "matched_area": matched_keyword,
-                "ward": ward,
-                "is_kobe_related": True,
-                "method": "keyword"
-            }
-            
-        # Step 2: キーワードにない場合は Gemini AI による文脈推測（フォールバック）
-        return self._classify_with_gemini(text)
+        
+        # キーワードがヒットしても、それが「単に地名ワードが含まれているだけの無関係な個人の日常投稿」でないかを精査するため、
+        # より高度にGeminiで神戸市との関連性を判定させる
+        return self._classify_and_filter_with_gemini(text, matched_keyword)
 
-    def _classify_with_gemini(self, text: str) -> Dict[str, Any]:
+    def _classify_and_filter_with_gemini(self, text: str, matched_keyword: Optional[str]) -> Dict[str, Any]:
+        default_ward = self.ward_mapping.get(matched_keyword, "神戸市中央区") if matched_keyword else "神戸市中央区"
+        default_area = matched_keyword if matched_keyword else "神戸市内"
+
         prompt = f"""
-                    以下のSNS投稿テキストは、兵庫県神戸市に関する市民の意見や日常のつぶやきです。
-                    テキスト内に地名が一切含まれていなくても、文脈、トピック、言葉遣いから、**神戸市内の9区（東灘区、灘区、兵庫区、長田区、須磨区、垂水区、北区、中央区、西区）のどこに関連が深いか**を必ず1つだけ選んで推測してください。
+        以下のSNS投稿テキストが、**兵庫県神戸市の行政、地域課題、街の魅力、イベント、防災、交通、店舗・施設、あるいは神戸市民の生活に直結する話題**として適切か判定してください。
 
-                    【テキスト】
-                    "{text}"
+        【判定基準（重要）】
+        - 単に地名や駅名（「神戸」など）が一文字含まれているだけで、実際には個人のプライベートな私事、無関係な日常の愚痴、宣伝スパム、または神戸と本質的な関係がない場合は **is_kobe_related: false** としてください。
+        - 神戸の街、地域、行政、観光、イベント、交通情報、または神戸での生活に関する話題であれば **is_kobe_related: true** としてください。
 
-                    【絶対条件】
-                    1. 「その他」や「不明」という判定は一切禁止です。必ずいずれかの行政区を選んでください。
-                    2. 特定の区が判断できない一般的な日常の話題や街のつぶやきの大部分は、最も中心地である「神戸市中央区」およびエリア名「三宮・元町周辺」として扱ってください。
-                    3. 必ず以下のJSON形式のフォーマットでのみ回答してください（Markdownのバッククォート ```json などは付けず、純粋なJSON文字列のみを返してください）。
+        【テキスト】
+        "{text}"
 
-                    {{
-                    "ward": "神戸市〇〇区（例: 神戸市中央区, 神戸市北区, 神戸市東灘区 など）",
-                    "matched_area": "詳細エリア名またはトピック（例: 三宮, 元町, 三宮周辺の飲食店, 街の意見 など）",
-                    "is_kobe_related": true
-                    }}
-                    """
+        【出力フォーマット】
+        必ず以下のJSON形式のフォーマットでのみ回答してください（Markdownのバッククォート ```json などは付けず、純粋なJSON文字列のみを返してください）。
+
+        {{
+        "is_kobe_related": true または false,
+        "ward": "神戸市〇〇区（例: 神戸市中央区, 神戸市北区 など。関連しない場合は null）",
+        "matched_area": "詳細エリア名またはトピック（関連しない場合は null）"
+        }}
+        """
         try:
             if not gemini_client or not hasattr(gemini_client, "models"):
                 raise Exception("Gemini client is not initialized properly.")
 
             response = gemini_client.models.generate_content(
-                model='gemini-3.8-flash',
+                model='gemini-2.5-flash',  # 安定した軽量・高速モデル
                 contents=prompt,
             )
             
@@ -140,7 +133,6 @@ class HybridRegionalClassifier:
                 raise Exception("Empty response from Gemini")
 
             clean_text = response.text.strip()
-            
             if clean_text.startswith("```json"):
                 clean_text = clean_text[7:]
             if clean_text.startswith("```"):
@@ -149,17 +141,33 @@ class HybridRegionalClassifier:
                 clean_text = clean_text[:-3]
                 
             data = json.loads(clean_text.strip())
-            data["method"] = "gemini"
+            data["method"] = "gemini_strict_filter"
+            
+            # もしキーワードマッチしていて関連ありと判定された場合はキーワード側の区を優先補正
+            if data.get("is_kobe_related") and matched_keyword:
+                if not data.get("ward") or data.get("ward") == "null":
+                    data["ward"] = default_ward
+                if not data.get("matched_area") or data.get("matched_area") == "null":
+                    data["matched_area"] = default_area
+                    
             return data
         except Exception as e:
-            print(f"Gemini Classification Error: {e}")
-            # エラー時も「その他」にせず中央区・三宮として救済する
+            print(f"Gemini Filtering Error: {e}")
+            # エラー時のフォールバック（キーワードがあれば一応救済、なければ除外）
+            if matched_keyword:
+                return {
+                    "is_kobe_related": True,
+                    "ward": default_ward,
+                    "matched_area": default_area,
+                    "method": "fallback_keyword"
+                }
             return {
-                "matched_area": "三宮・周辺エリア",
-                "ward": "神戸市中央区",
-                "is_kobe_related": True,
-                "method": "fallback"
+                "is_kobe_related": False,
+                "ward": None,
+                "matched_area": None,
+                "method": "fallback_reject"
             }
+
 
 class AnalysisEngine:
     def __init__(self):
@@ -179,7 +187,14 @@ class AnalysisEngine:
 
     def generate_analysis(self, post_id: Any, text: str, like_count: int, reply_count: int = 0, impressions: int = 0):
         try:
+            # 1. 厳密な関連性＆地域分類チェック
             region_info = self.regional_classifier.classify_text(text)
+            
+            # ★ 神戸に関係のない投稿（個人スパムや無関係なつぶやき）はここで完全に排除
+            if not region_info.get("is_kobe_related", False):
+                print(f"🚫 [除外] 神戸市と無関係な投稿と判定されたためスキップ [Post ID: {post_id}]: {text[:30]}...")
+                return
+
             matched_area = region_info.get("matched_area")
             ward = region_info.get("ward")
 
@@ -202,10 +217,10 @@ class AnalysisEngine:
             base_priority = int((negativity * 70) + (magnitude_factor * 3))
             base_priority = max(10, min(100, base_priority))
 
-            top_entity = matched_area if matched_area else (extracted_entities[0] if extracted_entities else "市民意見")
+            top_entity = matched_area if matched_area else "市民意見"
             post_summary = f"【{top_entity}】{text[:25]}..."
             
-            sub_category = ward if ward else (extracted_entities[1] if len(extracted_entities) > 1 else "一般課題")
+            sub_category = ward if ward else "一般課題"
             what_tree = {
                 "name": top_entity,
                 "children": [
@@ -238,7 +253,7 @@ class AnalysisEngine:
                 summary_text=post_summary
             )
             
-            print(f"Post ID: {post_id} [地域: {matched_area} / 区: {ward} (by {region_info.get('method')})] の分析・保存完了")
+            print(f"✨ [保存完了] Post ID: {post_id} [地域: {matched_area} / 区: {ward}]")
 
         except Exception as e:
             print(f"Cloud NL Analysis Error (Post ID: {post_id}): {e}")
@@ -306,8 +321,6 @@ class AnalysisEngine:
                 except (TypeError, ValueError):
                     replies = 0
                     
-                print(f"Post ID: {post_id} の地域分類 & AI分析を開始します...")
-                
                 self.generate_analysis(
                     post_id=post_id,
                     text=text,
@@ -319,84 +332,7 @@ class AnalysisEngine:
         except Exception as e:
             print(f"DB Fetch & Analysis Error: {e}")
 
-    def analyze_town_breakdown(self):
-        try:
-            response = self.supabase.table("sns_posts").select("post_text").execute()
-            posts = response.data
-            if not posts:
-                print("集計対象の投稿がありません。")
-                return
-
-            ward_counts = {}
-            town_counts = {}
-
-            for p in posts:
-                if not isinstance(p, dict):
-                    continue
-                text = str(p.get("post_text") or "")
-                
-                res = self.regional_classifier.classify_text(text)
-                
-                if isinstance(res, dict):
-                    ward = res.get("ward") or "その他・分類不能"
-                    town = res.get("matched_area") or "その他・主要駅"
-                else:
-                    ward = "その他・分類不能"
-                    town = "その他・主要駅"
-
-                if str(ward) == "None" or not ward:
-                    ward = "その他・分類不能"
-                if str(town) == "None" or not town:
-                    town = "その他・主要駅"
-
-                ward_counts[ward] = ward_counts.get(ward, 0) + 1
-                town_counts[town] = town_counts.get(town, 0) + 1
-
-            print("\n📊 【行政区別 投稿件数集計】")
-            for w, count in sorted(ward_counts.items(), key=lambda x: x[1], reverse=True):
-                print(f"  - {w}: {count} 件")
-
-            print("\n📍 【町名・詳細エリア別 投稿件数集計（上位）】")
-            sorted_towns = sorted(town_counts.items(), key=lambda x: x[1], reverse=True)
-            for t, count in sorted_towns[:10]:
-                print(f"  - {t}: {count} 件")
-
-        except Exception as e:
-            print(f"Town Breakdown Analysis Error: {e}")
-            
-    def analyze_issue_catalog_aggregation(self):
-        try:
-            response = self.supabase.table("issue_catalog").select("*").execute()
-            catalogs = response.data
-
-            if not catalogs:
-                print("issue_catalog にデータがありません。")
-                return
-
-            for catalog in catalogs:
-                if not isinstance(catalog, dict):
-                    continue
-                
-                issue_id = catalog.get("id")
-                
-                relations = self.supabase.table("issue_post_relations").select("sns_post_id").eq("issue_id", issue_id).execute()
-                post_ids = [r["sns_post_id"] for r in relations.data if isinstance(r, dict) and "sns_post_id" in r]
-
-                if post_ids:
-                    analysis_res = self.supabase.table("ai_analysis_results").select("sentiment_score").in_("sns_post_id", post_ids).execute()
-            
-            scores = [
-                float(str(a["sentiment_score"])) 
-                for a in analysis_res.data 
-                if isinstance(a, dict) and a.get("sentiment_score") is not None
-            ]
-            
-            avg_sentiment = sum(scores) / len(scores) if scores else 0.0
-        except Exception as e:
-            print(f"Meta Analysis Error: {e}")
-
 
 if __name__ == "__main__":
     engine = get_ai_engine()
     engine.analyze_posts_from_db()
-    engine.analyze_town_breakdown()

@@ -35,7 +35,7 @@ app.add_middleware(
 
 # 各種クライアントの初期化
 supabase: Client = get_supabase_client()
-x_client = XPostClient()  
+x_client = XPostCollector()  
 RESEND_FROM = os.environ.get("RESEND_FROM_EMAIL", "onboarding@resend.dev")
 
 class CollectionRequest(BaseModel):
