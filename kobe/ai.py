@@ -38,7 +38,7 @@ def get_ai_engine():
 
 class HybridRegionalClassifier:
     """
-    キーワードマッチ（高速）と Gemini AI（文脈・関連性推論）を組み合わせたハイブリッド地域分類クラス
+    キーワードマッチ（高速）と Gemini AI（文脈・関連性・投稿タイプの分類）を組み合わせたハイブリッド分類クラス
     """
     def __init__(self, master_csv: str = "kobe_keywords_master.csv"):
         self.kobe_keywords = set()
@@ -88,13 +88,9 @@ class HybridRegionalClassifier:
     def classify_text(self, text: str) -> Dict[str, Any]:
         """
         1. キーワードマッチを試す
-        2. ヒットした場合も、単なる個人の日常私的ツイート（無関係な話題）でないかをGeminiで厳密にチェックまたはAIフォールバックへ
+        2. Geminiにより「神戸関連か」「不満・課題か、個人の私的投稿か、一般的な話題か」を厳密に分類する
         """
-        # Step 1: キーワードマッチング
         matched_keyword = next((kw for kw in self.kobe_keywords if kw in text), None)
-        
-        # キーワードがヒットしても、それが「単に地名ワードが含まれているだけの無関係な個人の日常投稿」でないかを精査するため、
-        # より高度にGeminiで神戸市との関連性を判定させる
         return self._classify_and_filter_with_gemini(text, matched_keyword)
 
     def _classify_and_filter_with_gemini(self, text: str, matched_keyword: Optional[str]) -> Dict[str, Any]:
@@ -102,30 +98,33 @@ class HybridRegionalClassifier:
         default_area = matched_keyword if matched_keyword else "神戸市内"
 
         prompt = f"""
-        以下のSNS投稿テキストが、**兵庫県神戸市の行政、地域課題、街の魅力、イベント、防災、交通、店舗・施設、あるいは神戸市民の生活に直結する話題**として適切か判定してください。
+        あなたは「神戸市の地域課題・インフラ不満分析」の専門データアナリストです。
+提供されたX（Twitter）の投稿を分析し、指定のフォーマット（JSON等）で結果を返してください。
 
-        【判定基準（重要）】
-        - 単に地名や駅名（「神戸」など）が一文字含まれているだけで、実際には個人のプライベートな私事、無関係な日常の愚痴、宣伝スパム、または神戸と本質的な関係がない場合は **is_kobe_related: false** としてください。
-        - 神戸の街、地域、行政、観光、イベント、交通情報、または神戸での生活に関する話題であれば **is_kobe_related: true** としてください。
+【対象領域】
+兵庫県神戸市（および直接関連する交通・行政インフラ）
 
-        【テキスト】
-        "{text}"
+【判定ルール：保存（is_target = true）とする条件】
+以下の中身のある「神戸市に関連する不満・課題・意見」のみを true としてください。
+1. 交通・インフラへの不満（例：「JR神戸線が〇〇のせいで遅延して困る」「〇〇交差点が渋滞しすぎ」）
+2. 行政・生活環境への課題・不満（例：「神戸市のゴミ出しルールが分かりにくい」「〇〇公園の設備が壊れている」）
+3. 地域経済・街づくりへの意見（例：「〇〇駅前の再開発が進んでいない」）
 
-        【出力フォーマット】
-        必ず以下のJSON形式のフォーマットでのみ回答してください（Markdownのバッククォート ```json などは付けず、純粋なJSON文字列のみを返してください）。
+【判定ルール：除外（is_target = false）とする厳格な条件】
+以下のいずれかに該当する場合は、キーワードが含まれていても【絶対に除外】してください。
+・個人の日常・私的な感想・雑談（例：「神戸なう」「神戸牛美味しかった」「神戸公演お疲れ様」）
+・通過しただけの個人的な記録（例：「舞子トンネルおっしゃる通り、X（旧Twitter）の投稿は短文かつ独自のニュアンスや略語、文脈の省略が多いため、**単にキーワードだけでAIに判定させると「単なる日記」や「神戸に行った感想」まで「不満・課題」として誤検知されてしまいます。**
 
-        {{
-        "is_kobe_related": true または false,
-        "ward": "神戸市〇〇区（例: 神戸市中央区, 神戸市北区 など。関連しない場合は null）",
-        "matched_area": "詳細エリア名またはトピック（関連しない場合は null）"
-        }}
-        """
+特に日本語のSNS投稿から「本当に神戸市に対する不満・地域課題」をAIに判定させるには、**プロンプト（AIへの指示）で「不満の明確な定義」と「除外条件」を具体化すること**が不可欠です。
+
+
+"""
         try:
             if not gemini_client or not hasattr(gemini_client, "models"):
                 raise Exception("Gemini client is not initialized properly.")
 
             response = gemini_client.models.generate_content(
-                model='gemini-2.5-flash',  # 安定した軽量・高速モデル
+                model='gemini-3.8-flash',
                 contents=prompt,
             )
             
@@ -143,7 +142,6 @@ class HybridRegionalClassifier:
             data = json.loads(clean_text.strip())
             data["method"] = "gemini_strict_filter"
             
-            # もしキーワードマッチしていて関連ありと判定された場合はキーワード側の区を優先補正
             if data.get("is_kobe_related") and matched_keyword:
                 if not data.get("ward") or data.get("ward") == "null":
                     data["ward"] = default_ward
@@ -153,16 +151,17 @@ class HybridRegionalClassifier:
             return data
         except Exception as e:
             print(f"Gemini Filtering Error: {e}")
-            # エラー時のフォールバック（キーワードがあれば一応救済、なければ除外）
             if matched_keyword:
                 return {
                     "is_kobe_related": True,
+                    "post_type": "general",
                     "ward": default_ward,
                     "matched_area": default_area,
                     "method": "fallback_keyword"
                 }
             return {
                 "is_kobe_related": False,
+                "post_type": None,
                 "ward": None,
                 "matched_area": None,
                 "method": "fallback_reject"
@@ -175,25 +174,39 @@ class AnalysisEngine:
         self.scaler = MinMaxScaler(feature_range=(0, 1))
         self.regional_classifier = HybridRegionalClassifier()
 
-    def _calculate_priority_with_ml(self, ai_base_priority: int, likes: int, replies: int, impressions: int) -> int:
+    def _calculate_priority_with_ml(self, ai_base_priority: int, likes: int, replies: int, impressions: int, is_complaint: bool) -> int:
         raw_features = np.array([[float(likes), float(replies), float(impressions)]])
         weights = np.array([0.4, 0.4, 0.2])
         
         engagement_score = np.dot(raw_features, weights)[0]
         engagement_boost = min(30.0, float(engagement_score) * 0.5)
         
-        total_score = int((ai_base_priority * 0.7) + engagement_boost)
+        # 不満・課題投稿の場合は優先度を少し高めにブーストする
+        complaint_bonus = 15 if is_complaint else 0
+        
+        total_score = int((ai_base_priority * 0.6) + engagement_boost + complaint_bonus)
         return max(0, min(100, total_score))
 
     def generate_analysis(self, post_id: Any, text: str, like_count: int, reply_count: int = 0, impressions: int = 0):
         try:
-            # 1. 厳密な関連性＆地域分類チェック
+            # 1. 関連性、地域、投稿タイプ（不満 vs 個人 vs 一般）の分類チェック
             region_info = self.regional_classifier.classify_text(text)
             
-            # ★ 神戸に関係のない投稿（個人スパムや無関係なつぶやき）はここで完全に排除
+            # 神戸に関係ない投稿は除外
             if not region_info.get("is_kobe_related", False):
-                print(f"🚫 [除外] 神戸市と無関係な投稿と判定されたためスキップ [Post ID: {post_id}]: {text[:30]}...")
+                print(f"🚫 [除外] 神戸市と無関係な投稿 [Post ID: {post_id}]")
                 return
+
+            post_type = region_info.get("post_type", "general")
+            
+            # ★「個人の私的ツイート (personal)」と判定されたものは分析対象外としてスキップする場合
+            if post_type == "personal":
+                print(f"👤 [スキップ] 個人の私的・日常ツイートと判定 [Post ID: {post_id}]: {text[:30]}...")
+                return
+
+            is_complaint = (post_type == "complaint")
+            if is_complaint:
+                print(f"⚠️ [不満・課題検出] Post ID: {post_id}")
 
             matched_area = region_info.get("matched_area")
             ward = region_info.get("ward")
@@ -218,7 +231,8 @@ class AnalysisEngine:
             base_priority = max(10, min(100, base_priority))
 
             top_entity = matched_area if matched_area else "市民意見"
-            post_summary = f"【{top_entity}】{text[:25]}..."
+            prefix_label = "[不満・課題]" if is_complaint else "[一般話題]"
+            post_summary = f"{prefix_label}【{top_entity}】{text[:20]}..."
             
             sub_category = ward if ward else "一般課題"
             what_tree = {
@@ -226,7 +240,7 @@ class AnalysisEngine:
                 "children": [
                     {
                         "name": sub_category,
-                        "children": [{"name": f"感情スコア: {cloud_sentiment_score:.2f} (熱量: {sentiment_magnitude:.1f})"}]
+                        "children": [{"name": f"感情スコア: {cloud_sentiment_score:.2f} (タイプ: {post_type})"}]
                     }
                 ]
             }
@@ -235,7 +249,8 @@ class AnalysisEngine:
                 ai_base_priority=base_priority,
                 likes=like_count,
                 replies=reply_count,
-                impressions=impressions
+                impressions=impressions,
+                is_complaint=is_complaint
             )
 
             analysis_data = {
@@ -253,7 +268,7 @@ class AnalysisEngine:
                 summary_text=post_summary
             )
             
-            print(f"✨ [保存完了] Post ID: {post_id} [地域: {matched_area} / 区: {ward}]")
+            print(f"✨ [保存完了] Post ID: {post_id} [タイプ: {post_type} / 地域: {matched_area}]")
 
         except Exception as e:
             print(f"Cloud NL Analysis Error (Post ID: {post_id}): {e}")
@@ -331,6 +346,71 @@ class AnalysisEngine:
 
         except Exception as e:
             print(f"DB Fetch & Analysis Error: {e}")
+
+from database import get_supabase_client
+from google.cloud import language_v1
+
+# Cloud Natural Language クライアントの初期化（未定義の場合）
+nl_client = language_v1.LanguageServiceClient()
+
+def process_and_save_posts(posts):
+    ai_engine = get_ai_engine()
+    supabase = get_supabase_client()  # ★ここで supabase クライアントを取得
+    
+    for post in posts:
+        text = post.get("post_text", "")
+        
+        # 1. Geminiで「神戸関連か」「個人・不満・一般のどれか」を判定
+        region_info = ai_engine.regional_classifier.classify_text(text)
+        
+        if not region_info.get("is_kobe_related", False):
+            continue
+        if region_info.get("post_type") == "personal":
+            continue
+            
+        post_type = region_info.get("post_type", "general")
+        is_complaint = (post_type == "complaint")
+        
+        # 2. Cloud Natural Language で感情分析を実行
+        try:
+            document = language_v1.Document(content=text, type_=language_v1.Document.Type.PLAIN_TEXT)
+            sentiment_response = nl_client.analyze_sentiment(request={"document": document})
+            cloud_sentiment_score = float(sentiment_response.document_sentiment.score)
+            sentiment_magnitude = float(sentiment_response.document_sentiment.magnitude)
+        except Exception:
+            cloud_sentiment_score = 0.0
+            sentiment_magnitude = 0.0
+
+        # 3. 優先度スコアの計算
+        negativity = max(0.0, -cloud_sentiment_score)
+        magnitude_factor = min(10.0, sentiment_magnitude)
+        base_priority = int((negativity * 70) + (magnitude_factor * 3))
+        
+        likes = int(post.get("likes_count", 0) or 0)
+        complaint_bonus = 15 if is_complaint else 0
+        final_priority = max(10, min(100, base_priority + complaint_bonus)) # ★ここで final_priority を定義
+
+        # 4. issue_catalog に保存するデータ構造の作成
+        matched_area = region_info.get("matched_area") or "市民意見"
+        catalog_data = {
+            "platform": post.get("platform", "X"),
+            "original_post_id": post.get("original_post_id"),
+            "post_text": text,
+            "post_type": post_type,
+            "ward": region_info.get("ward"),
+            "matched_area": region_info.get("matched_area"),
+            "ai_summary": f"【{matched_area}】{text[:35]}...",
+            "total_priority_score": final_priority,     
+            "sentiment_score": cloud_sentiment_score,   
+            "likes_count": likes
+        }
+        
+        # 5. データベースへアップサート
+        try:
+            supabase.table("issue_catalog").upsert(catalog_data, on_conflict="original_post_id").execute()
+            print(f"[保存完了] {text[:20]}... (タイプ: {post_type})")
+        except Exception as db_e:
+            print(f"❌ DB Error: {db_e}")
 
 
 if __name__ == "__main__":
