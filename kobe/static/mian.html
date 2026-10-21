@@ -473,6 +473,7 @@ function renderPostsContainer(queryTitle, posts, currentTab = 'all', historyId =
             if (post.collected_at) {
                 const dateObj = new Date(post.collected_at);
                 dateStr = `<span class="date-badge"> 🕒${dateObj.toLocaleString()}</span>`;
+                dateStr = `<span class="date-badge"> 🕒 ${dateObj.toLocaleString()}</span>`;
             }
 
             let sentimentBadge = '';
@@ -494,7 +495,10 @@ function renderPostsContainer(queryTitle, posts, currentTab = 'all', historyId =
             postsHtml += `
                 <div class="post-item">
                     <div class="post-header" onclick="toggleLogicTree(this, '${post.id}')">
+
                         <div class="post-summary"> ${summaryText}</div>
+                        <div class="post-summary">📌 ${summaryText}</div>
+
                         <div class="post-original">${originalText}</div>
                         ${tagsHtml}
                         <div class="post-footer">
@@ -607,7 +611,9 @@ async function showRegionStats() {
         if (totalPosts === 0) {
             displayArea.innerHTML = `
                 <div class="analysis-card" style="width: 100%; box-sizing: border-box; text-align: center;">
+
                     <h3 style="color: #202124; margin-bottom: 12px;"> 神戸市 行政区別 投稿分布</h3>
+                    <h3 style="color: #202124; margin-bottom: 12px;">📊 神戸市 行政区別 投稿分布</h3>
                     <p style="color: #5f6368; font-size: 14px;">まだ地域データが蓄積されていません。「Xから最新データを収集」を実行してください。</p>
                 </div>
             `;
@@ -621,6 +627,7 @@ async function showRegionStats() {
                 <div style="margin-bottom: 16px; text-align: left;">
                     <div style="display: flex; justify-content: space-between; font-size: 14px; margin-bottom: 6px; color: #202124;">
                         <span> ${ward}</span>
+                        <span>📍 ${ward}</span>
                         <span style="font-weight: bold; color: #1a73e8;">${count} 件 (${percentage}%)</span>
                     </div>
                     <div style="background: #e8eaed; border-radius: 6px; height: 12px; width: 100%; overflow: hidden;">

@@ -122,7 +122,6 @@ class XPostCollector:
         
         sentiment_query = " OR ".join(sentiment_or_list) if sentiment_or_list else '"最高" OR "不満"'
 
-        # 3. 全体の結合（AND分析: (エリアOR) AND (感情OR)）
         exclusions = [
             "-is:retweet", "-PR", "-広告", "-宣伝", "-求人",
             "-AV", "-アダルト", "-風俗", "-マッチングアプリ",
