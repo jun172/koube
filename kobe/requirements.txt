@@ -1,9 +1,0 @@
-fastapi
-uvicorn
-resend
-supabase
-python-dotenv
-google-genai
-scikit-learn
-numpy
-requests

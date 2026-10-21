@@ -1,0 +1,653 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>神戸市SNS分析ダッシュボード</title>
+    <link rel="icon" href="/static/imag.png" type="image/png">
+    
+    <style>
+        body { margin: 0; background-color: #f8f9fa; color: #202124; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; overflow: hidden; }
+        .app-container { display: flex; height: 100vh; overflow: hidden; position: relative; }
+
+        /* サイドバー */
+        .sidebar { width: 260px; background-color: #f1f3f4; padding: 24px 20px; border-right: 1px solid #dadce0; box-sizing: border-box; display: flex; flex-direction: column; overflow-y: auto; flex-shrink: 0; transition: transform 0.3s ease; z-index: 100; }
+        .sidebar h3 { font-size: 14px; color: #5f6368; margin-top: 20px; margin-bottom: 12px; font-weight: normal; }
+
+        /* ユーザー名表示エリア */
+        .user-welcome { font-size: 14px; color: #1a73e8; font-weight: bold; padding-bottom: 15px; border-bottom: 1px solid #dadce0; }
+
+        /* アクションボタン */
+        .new-chat-btn { margin: 8px 0; padding: 10px; background-color: #1a73e8; color: #ffffff; border: none; border-radius: 8px; font-weight: bold; cursor: pointer; transition: background-color 0.2s, transform 0.1s; width: 100%; text-align: center; box-sizing: border-box; }
+        .new-chat-btn:hover { background-color: #1557b0; }
+        .new-chat-btn:active { transform: scale(0.98); }
+
+        /* 停止ボタン用スタイル */
+        .stop-btn { background-color: #d93025 !important; color: #ffffff !important; }
+        .stop-btn:hover { background-color: #b31412 !important; }
+
+        /* モバイル用ハンバーガーメニューボタン */
+        .mobile-menu-btn { display: none; position: fixed; top: 12px; left: 12px; z-index: 101; background: #f1f3f4; border: 1px solid #dadce0; color: #202124; padding: 8px 12px; border-radius: 8px; cursor: pointer; font-size: 16px; align-items: center; justify-content: center; }
+
+        /* サイドバーの背景オーバーレイ（スマホ用） */
+        .sidebar-overlay { display: none; position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(0,0,0,0.3); z-index: 99; }
+
+        /* メインコンテンツ */
+        .main-content { flex: 1; display: flex; flex-direction: column; position: relative; overflow: hidden; min-width: 0; }
+        #mainDisplayArea { flex: 1; overflow-y: auto; padding: 40px; display: flex; flex-direction: column; align-items: center; justify-content: center; box-sizing: border-box; scroll-behavior: smooth; -webkit-overflow-scrolling: touch; background-color: #ffffff; }
+        
+        /* 初期ウェルカム画面 */
+        .welcome-container { text-align: center; max-width: 600px; width: 100%; display: flex; flex-direction: column; align-items: center; gap: 24px; animation: fadeIn 0.4s ease-out; padding: 0 20px; box-sizing: border-box; }
+        .welcome-title { font-size: 32px; font-weight: bold; background: linear-gradient(90deg, #1a73e8, #9334e6); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin: 0; word-break: break-all; }
+        .welcome-subtitle { font-size: 16px; color: #5f6368; margin: 0; }
+
+        /* 検索結果カード */
+        .analysis-card { 
+            background-color: #ffffff; 
+            padding: 30px; 
+            border-radius: 16px; 
+            border: 1px solid #dadce0; 
+            max-width: 800px; 
+            width: 100%; 
+            margin-bottom: 24px; 
+            box-sizing: border-box; 
+            box-shadow: 0 4px 20px rgba(0,0,0,0.05); 
+            animation: fadeIn 0.3s ease-out; 
+            color: #202124; 
+        }
+
+        .analysis-card p, 
+        .analysis-card span, 
+        .analysis-card div { 
+            color: #3c4043; 
+        }
+
+        .analysis-card h4, 
+        .analysis-card strong {
+            color: #202124;
+        }
+
+        /* 投稿アイテム */
+        .post-item { 
+            padding: 16px 0; 
+            margin-bottom: 16px; 
+            border-bottom: 1px solid rgba(0, 0, 0, 0.08); 
+            transition: opacity 0.2s ease;
+        }
+        .post-item:last-child {
+            border-bottom: none;
+        }
+        .post-header { display: flex; flex-direction: column; cursor: pointer; }
+        
+        .post-summary { font-weight: bold; color: #1a73e8; font-size: 15px; margin-bottom: 8px; }
+        .post-original { 
+            font-size: 14px; 
+            color: #202124; 
+            margin-bottom: 8px; 
+            line-height: 1.6; 
+            padding: 12px 14px; 
+            background: #f8f9fa; 
+            border-radius: 8px; 
+            border-left: 4px solid #1a73e8; 
+            word-break: break-word; 
+            white-space: pre-wrap; 
+        }
+        .post-footer { display: flex; justify-content: space-between; align-items: center; margin-top: 8px; font-size: 12px; color: #1a73e8; flex-wrap: wrap; gap: 6px; }
+        .like-badge { background: rgba(26, 115, 232, 0.1); padding: 3px 8px; border-radius: 12px; color: #1a73e8; font-weight: 500; }
+        .date-badge { color: #5f6368 !important; font-size: 11px; font-weight: 500; }
+
+        /* 下部入力エリア・タグエリア */
+        .bottom-input-section { padding: 20px 40px 30px; display: flex; flex-direction: column; align-items: center; gap: 12px; background-color: #ffffff; width: 100%; box-sizing: border-box; border-top: 1px solid #dadce0; }
+        
+        .tag-container { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; align-items: center; max-width: 600px; width: 100%; }
+        .tag { background-color: #f1f3f4; padding: 6px 12px; border-radius: 20px; font-size: 13px; cursor: pointer; border: 1px solid #dadce0; color: #202124; display: inline-flex; align-items: center; gap: 6px; transition: background 0.2s, border-color 0.2s; }
+        .tag:hover { background-color: #e8eaed; border-color: #1a73e8; }
+        .tag-delete { background: none; border: none; color: #5f6368; cursor: pointer; font-size: 14px; padding: 0; line-height: 1; border-radius: 50%; width: 16px; height: 16px; display: inline-flex; align-items: center; justify-content: center; transition: color 0.2s, background 0.2s; }
+        .tag-delete:hover { color: #d93025; background: rgba(217,48,37,0.1); }
+        
+        .add-tag-btn { background: #f1f3f4; border: 1px dashed #bdc1c6; color: #5f6368; padding: 6px 12px; border-radius: 20px; font-size: 13px; cursor: pointer; transition: all 0.2s; }
+        .add-tag-btn:hover { border-color: #1a73e8; color: #1a73e8; background: rgba(26,115,232,0.05); }
+        .tag-input-form { display: inline-flex; align-items: center; gap: 4px; background: #f1f3f4; border: 1px solid #1a73e8; padding: 2px 8px; border-radius: 20px; }
+        .tag-input-form input { background: none; border: none; color: #202124; font-size: 13px; outline: none; width: 90px; }
+        .tag-input-form button { background: #1a73e8; color: #ffffff; border: none; border-radius: 10px; padding: 2px 8px; font-size: 11px; font-weight: bold; cursor: pointer; }
+
+        .search-container { position: relative; width: 100%; max-width: 600px; }
+        .search-input { width: 100%; padding: 16px 24px; padding-right: 60px; border-radius: 30px; border: 1px solid #dadce0; background: #f1f3f4; color: #202124; outline: none; box-sizing: border-box; font-size: 15px; transition: border-color 0.2s, box-shadow 0.2s; -webkit-appearance: none; }
+        .search-input::placeholder { color: #5f6368; opacity: 1; }
+        .search-input:focus { border-color: #1a73e8; box-shadow: 0 0 0 2px rgba(26, 115, 232, 0.2); background: #ffffff; }
+        .search-icon-button { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); background: rgba(218, 220, 224, 0.6); border: none; border-radius: 50%; width: 40px; height: 40px; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 16px; transition: background 0.2s, transform 0.1s; backdrop-filter: blur(4px); color: #202124; }
+        .search-icon-button:hover { background: #bdc1c6; }
+
+        .tree-container { 
+            margin-top: 15px; 
+            padding: 15px; 
+            background-color: #f8f9fa; 
+            border-radius: 12px; 
+            border: 1px solid #dadce0; 
+            animation: expandDown 0.3s ease-out; 
+            overflow: hidden; 
+            color: #202124; 
+        }
+
+        .tree-container, .tree-container span, .tree-container div {
+            color: #3c4043; 
+        }
+
+        @media (max-width: 768px) {
+            .sidebar { position: fixed; top: 0; left: 0; height: 100%; transform: translateX(-100%); box-shadow: 4px 0 15px rgba(0,0,0,0.1); }
+            .sidebar.open { transform: translateX(0); }
+            .sidebar-overlay.open { display: block; }
+            .mobile-menu-btn { display: flex; }
+            .main-content { padding-top: 50px; }
+            #mainDisplayArea { padding: 16px; }
+            .analysis-card { padding: 16px; }
+            .bottom-input-section { padding: 15px 16px 20px; }
+            .welcome-title { font-size: 24px; }
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(6px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes expandDown {
+            from { opacity: 0; max-height: 0; padding-top: 0; padding-bottom: 0; }
+            to { opacity: 1; max-height: 350px; padding: 15px; }
+        }
+    </style>
+</head>
+<body>
+    <button class="mobile-menu-btn" onclick="toggleSidebar()">☰ メニュー</button>
+    <div class="sidebar-overlay" id="sidebarOverlay" onclick="toggleSidebar()"></div>
+
+    <div class="app-container">
+        <!-- サイドバー -->
+        <aside class="sidebar" id="sidebar">
+            <div id="welcome-user" class="user-welcome">Unmute City</div>
+            
+            <button class="new-chat-btn" onclick="startNewSearch()">
+                新しい検索・分析
+            </button>
+            <button class="new-chat-btn" onclick="triggerXCollection()">Xから最新データを収集</button>
+            <button class="new-chat-btn stop-btn" onclick="stopXCollection()">🛑 X収集を停止</button>
+
+            <button class="new-chat-btn" onclick="triggerAiAnalysis()" style="margin-top: 12px;">AI一括解析を実行</button>
+            <button class="new-chat-btn stop-btn" onclick="stopAiAnalysis()">🛑 AI解析を停止</button>
+            <button class="new-chat-btn" onclick="showRegionStats()" style="background-color: #c58af9; color: #131314; margin-top: 12px;">📊 地域別投稿グラフを表示</button>
+        </aside>
+
+        <!-- メイン画面 -->
+        <main class="main-content">
+            <div id="mainDisplayArea">
+                <div class="welcome-container" id="welcomeView">
+                    <h1 class="welcome-title">神戸市 SNS分析アシスタント</h1>
+                    <p class="welcome-subtitle">分析したいキーワードやタグを選択・入力してください</p>
+                </div>
+            </div>
+            <!-- 下部入力エリア（クイック検索タグ付き） -->
+            <div class="bottom-input-section">
+                <div class="tag-container" id="tagContainer"></div>
+                <div class="search-container">
+                    <input type="text" id="searchInput" placeholder="データベース内を検索（例: 道路, バス, 三宮）..." class="search-input" onkeydown="handleSearchKeyDown(event)">
+                    <button type="button" class="search-icon-button" onclick="executeSearch()">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                            <circle cx="11" cy="11" r="7" stroke="#333" stroke-width="2.2"/>
+                            <line x1="16.2" y1="16.2" x2="21" y2="21" stroke="#333" stroke-width="2.2" stroke-linecap="round"/>
+                        </svg>
+                    </button>
+                </div>
+            </div>
+        </main>
+    </div>
+
+<script>
+const API_BASE_URL = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' 
+    ? 'http://localhost:8000' 
+    : '';
+
+let currentPosts = [];
+let currentQueryTitle = "";
+let customTags = JSON.parse(localStorage.getItem("customTags")) || ['神戸市', '三宮', '不満', '道路'];
+let currentHistoryId = null;
+
+window.onload = async function() {
+    const name = localStorage.getItem("userName");
+    if (!name) {
+        window.location.href = '/static/login.html';
+        return;
+    }
+
+    const welcomeUser = document.getElementById("welcome-user");
+    if (welcomeUser) {
+        welcomeUser.textContent = `ようこそ、${name} さん`;
+    }
+
+    if (!localStorage.getItem("customTags")) {
+        customTags = ['神戸市', '三宮', '不満', '道路'];
+        localStorage.setItem("customTags", JSON.stringify(customTags));
+    } else {
+        customTags = JSON.parse(localStorage.getItem("customTags"));
+    }
+
+    renderTags();
+};
+
+function handleSearchKeyDown(event) {
+    if (event.key === 'Enter') {
+        event.preventDefault();
+        executeSearch();
+    }
+}
+
+let isSearching = false;
+
+async function executeSearch() {
+    if (isSearching) return;
+    
+    const input = document.getElementById('searchInput');
+    if (!input) return;
+    
+    const query = input.value.trim();
+    if (!query) return;
+
+    isSearching = true;
+
+    try {
+        const response = await fetch(`${API_BASE_URL}/api/search?q=${encodeURIComponent(query)}`);
+        const data = await response.json();
+
+        currentQueryTitle = data.query || query;
+        currentPosts = data.results && data.results.posts ? data.results.posts : (data.posts || []);
+        currentHistoryId = data.history_id || '';
+
+        renderPostsContainer(currentQueryTitle, currentPosts, 'all', currentHistoryId);
+        
+        input.value = '';
+        const displayArea = document.getElementById('mainDisplayArea');
+        if (displayArea) displayArea.scrollTo({ top: displayArea.scrollHeight, behavior: 'smooth' });
+    } catch (error) {
+        console.error("検索データの取得に失敗しました:", error);
+        alert("サーバーとの通信に失敗しました。APIが起動しているか確認してください。");
+    } finally {
+        isSearching = false;
+    }
+}
+
+function toggleSidebar() {
+    const sidebar = document.getElementById('sidebar');
+    const overlay = document.getElementById('sidebarOverlay');
+    sidebar.classList.toggle('open');
+    overlay.classList.toggle('open');
+}
+
+function renderTags() {
+    const container = document.getElementById('tagContainer');
+    if (!container) return;
+    let html = '';
+
+    customTags.forEach((tag, index) => {
+        html += `
+            <span class="tag">
+                <span onclick="addTagToSearch('${tag}')">${tag}</span>
+                <button class="tag-delete" onclick="event.stopPropagation(); removeTag(${index})" title="削除">×</button>
+            </span>
+        `;
+    });
+
+    html += `<button class="add-tag-btn" onclick="showAddTagInput()">+ 追加</button>`;
+    container.innerHTML = html;
+}
+
+function showAddTagInput() {
+    const container = document.getElementById('tagContainer');
+    if (!container) return;
+    let html = '';
+    customTags.forEach((tag, index) => {
+        html += `
+            <span class="tag">
+                <span onclick="addTagToSearch('${tag}')">${tag}</span>
+                <button class="tag-delete" onclick="event.stopPropagation(); removeTag(${index})" title="削除">×</button>
+            </span>
+        `;
+    });
+
+    html += `
+        <span class="tag-input-form">
+            <input type="text" id="newTagInput" placeholder="キーワード" onkeydown="if(event.key === 'Enter') confirmAddTag()">
+            <button onclick="confirmAddTag()">追加</button>
+        </span>
+    `;
+    container.innerHTML = html;
+    const input = document.getElementById('newTagInput');
+    if (input) input.focus();
+}
+
+function confirmAddTag() {
+    const input = document.getElementById('newTagInput');
+    if (!input) return;
+    let val = input.value.trim();
+    if (!val) {
+        renderTags();
+        return;
+    }
+
+    if (!customTags.includes(val)) {
+        customTags.push(val);
+        localStorage.setItem("customTags", JSON.stringify(customTags));
+    }
+    renderTags();
+}
+
+function removeTag(index) {
+    customTags.splice(index, 1);
+    localStorage.setItem("customTags", JSON.stringify(customTags));
+    renderTags();
+}
+
+function addTagToSearch(tag) {
+    const input = document.getElementById('searchInput');
+    if (input) {
+        input.value = tag;
+        executeSearch();
+    }
+}
+
+function renderHashtags(text) {
+    if (!text) return '';
+    const matches = text.match(/#[\w\u3000-\u30ff\u4e00-\u9faf]+/g);
+    if (!matches || matches.length === 0) return '';
+
+    return '<div class="post-tags" style="margin-top: 6px; display: flex; flex-wrap: wrap; gap: 6px;">' +
+        matches.map(tag => `<span onclick="event.stopPropagation(); addTagToSearch('${tag}')" style="background: rgba(26,115,232,0.1); color: #1a73e8; padding: 2px 8px; border-radius: 4px; font-size: 11px; cursor: pointer; border: 1px solid rgba(26,115,232,0.2);">${tag}</span>`).join('') +
+        '</div>';
+}
+
+async function triggerXCollection() {
+    if (!confirm("CSVマスターデータ（町名・駅名・感情ワード）に基づいて全自動でXデータ収集とAI解析を開始しますか？")) {
+        return;
+    }
+
+    try {
+        const response = await fetch(`${API_BASE_URL}/api/collect`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' }
+        });
+        
+        if (!response.ok) throw new Error("APIの呼び出しに失敗しました");
+        alert("バックグラウンドでCSVマスターによる全自動Xデータ収集とAI解析を開始しました！");
+    } catch (error) {
+        console.error("収集エラー:", error);
+        alert("データの収集開始に失敗しました。");
+    }
+}
+
+async function stopXCollection() {
+    try {
+        const response = await fetch(`${API_BASE_URL}/api/stop-x`, { method: 'POST' });
+        const data = await response.json();
+        alert(data.message || "X収集の停止リクエストを送信しました。");
+    } catch (error) {
+        console.error("X停止エラー:", error);
+        alert("X収集の停止に失敗しました。");
+    }
+}
+
+async function triggerAiAnalysis() {
+    if (!confirm("データベース内の全投稿に対してAI解析を再実行しますか？")) return;
+
+    try {
+        const response = await fetch(`${API_BASE_URL}/api/run-ai-analysis`, { method: 'POST' });
+        if (!response.ok) throw new Error("AI解析の起動に失敗しました");
+        const data = await response.json();
+        alert(data.message || "AI一括解析のバックグラウンド処理を開始しました！");
+    } catch (error) {
+        console.error("AI解析エラー:", error);
+        alert("AI解析の起動に失敗しました。");
+    }
+}
+
+async function stopAiAnalysis() {
+    try {
+        const response = await fetch(`${API_BASE_URL}/api/stop-ai`, { method: 'POST' });
+        const data = await response.json();
+        alert(data.message || "AI解析の停止リクエストを送信しました。");
+    } catch (error) {
+        console.error("AI停止エラー:", error);
+        alert("AI解析の停止に失敗しました。");
+    }
+}
+
+function startNewSearch() {
+    const displayArea = document.getElementById('mainDisplayArea');
+    if (displayArea) {
+        displayArea.style.justifyContent = 'center';
+        displayArea.innerHTML = `
+            <div class="welcome-container" id="welcomeView">
+                <h1 class="welcome-title">神戸市 SNS分析アシスタント</h1>
+                <p class="welcome-subtitle">分析したいキーワードやタグを選択・入力してください</p>
+            </div>
+        `;
+    }
+
+    const input = document.getElementById('searchInput');
+    if (input) input.value = '';
+    currentHistoryId = null;
+    if (window.innerWidth <= 768) {
+        toggleSidebar();
+    }
+}
+
+async function switchSentimentTab(sentimentType) {
+    if (!currentHistoryId) {
+        alert("検索結果が読み込まれていません。");
+        return;
+    }
+    try {
+        const response = await fetch(`${API_BASE_URL}/api/history/${currentHistoryId}?sentiment=${sentimentType}`);
+        if (!response.ok) throw new Error("データの取得に失敗しました");
+
+        const data = await response.json();
+        const posts = data.results && data.results.posts ? data.results.posts : [];
+
+        renderPostsContainer(currentQueryTitle, posts, sentimentType, currentHistoryId);
+    } catch (error) {
+        console.error("感情タブ切り替えエラー:", error);
+        alert("感情別のデータ切り替えに失敗しました。");
+    }
+}
+
+function renderPostsContainer(queryTitle, posts, currentTab = 'all', historyId = '') {
+    const displayArea = document.getElementById('mainDisplayArea');
+    if (!displayArea) return;
+    displayArea.style.justifyContent = 'flex-start';
+
+    let postsHtml = '';
+    if (posts.length === 0) {
+        postsHtml = `<p style="color:#666; font-size:13px; padding: 10px 0;">該当する投稿データが見つかりませんでした。</p>`;
+    } else {
+       posts.forEach((post) => {
+            const summaryText = post.summary || "要約なし";
+            const originalText = post.post_text || post.title || summaryText;
+            const tagsHtml = renderHashtags(originalText);
+
+            let dateStr = '';
+            if (post.collected_at) {
+                const dateObj = new Date(post.collected_at);
+                dateStr = `<span class="date-badge"> 🕒 ${dateObj.toLocaleString()}</span>`;
+            }
+
+            let sentimentBadge = '';
+            if (post.sentiment_score !== undefined && post.sentiment_score !== null) {
+                const sScore = parseFloat(post.sentiment_score);
+                let sColor = '#1a73e8';
+                let sText = '中立';
+                
+                if (sScore > 0) {
+                    sColor = '#137333';
+                    sText = `ポジティブ (${sScore.toFixed(2)})`;
+                } else if (sScore < 0) {
+                    sColor = '#c5221f';
+                    sText = `ネガティブ (${sScore.toFixed(2)})`;
+                }
+                sentimentBadge = `<span style="background: rgba(0,0,0,0.05); color: ${sColor}; border: 1px solid ${sColor}; padding: 2px 6px; border-radius: 4px; font-size: 10px;">${sText}</span>`;
+            }
+
+            postsHtml += `
+                <div class="post-item">
+                    <div class="post-header" onclick="toggleLogicTree(this, '${post.id}')">
+                        <div class="post-summary">📌 ${summaryText}</div>
+                        <div class="post-original">${originalText}</div>
+                        ${tagsHtml}
+                        <div class="post-footer">
+                            <span class="like-badge">❤ ${post.likes || 0} いいね</span>
+                            ${sentimentBadge}
+                            ${dateStr}
+                        </div>
+                    </div>
+                </div>
+            `;
+        });
+    }
+
+    displayArea.innerHTML = `
+        <div class="analysis-card" style="width: 100%; box-sizing: border-box;">
+            <div style="display: flex; gap: 6px; margin-bottom: 16px;">
+                <button onclick="switchSentimentTab('all')" style="background: ${currentTab === 'all' ? '#1a73e8' : '#f1f3f4'}; color: ${currentTab === 'all' ? '#ffffff' : '#202124'}; font-weight: ${currentTab === 'all' ? 'bold' : 'normal'}; border: 1px solid ${currentTab === 'all' ? '#1a73e8' : '#dadce0'}; padding: 5px 10px; border-radius: 4px; font-size: 11px; cursor: pointer;">すべて</button>
+                <button onclick="switchSentimentTab('positive')" style="background: ${currentTab === 'positive' ? '#1a73e8' : '#f1f3f4'}; color: ${currentTab === 'positive' ? '#ffffff' : '#202124'}; font-weight: ${currentTab === 'positive' ? 'bold' : 'normal'}; border: 1px solid ${currentTab === 'positive' ? '#1a73e8' : '#dadce0'}; padding: 5px 10px; border-radius: 4px; font-size: 11px; cursor: pointer;">ポジティブ</button>
+                <button onclick="switchSentimentTab('neutral')" style="background: ${currentTab === 'neutral' ? '#1a73e8' : '#f1f3f4'}; color: ${currentTab === 'neutral' ? '#ffffff' : '#202124'}; font-weight: ${currentTab === 'neutral' ? 'bold' : 'normal'}; border: 1px solid ${currentTab === 'neutral' ? '#1a73e8' : '#dadce0'}; padding: 5px 10px; border-radius: 4px; font-size: 11px; cursor: pointer;">中立</button>
+                <button onclick="switchSentimentTab('negative')" style="background: ${currentTab === 'negative' ? '#1a73e8' : '#f1f3f4'}; color: ${currentTab === 'negative' ? '#ffffff' : '#202124'}; font-weight: ${currentTab === 'negative' ? 'bold' : 'normal'}; border: 1px solid ${currentTab === 'negative' ? '#1a73e8' : '#dadce0'}; padding: 5px 10px; border-radius: 4px; font-size: 11px; cursor: pointer;">ネガティブ</button>
+            </div>
+            ${postsHtml}
+        </div>
+    `;
+}
+
+async function renderSimpleTree(container, postId) {
+    let rawData;
+    try {
+        const response = await fetch(`${API_BASE_URL}/api/tree/post/${encodeURIComponent(postId)}`);
+        if (!response.ok) {
+            container.innerHTML = `<div style="font-size: 12px; color: #666; padding: 6px;">※ この投稿に紐づく詳細カテゴリデータはありません。</div>`;
+            return;
+        }
+        rawData = await response.json();
+    } catch (error) {
+        container.innerHTML = `<div style="font-size: 12px; color: #d93025; padding: 6px;">※ データ取得エラーが発生しました。</div>`;
+        return;
+    }
+
+    if (!rawData || !rawData.name || rawData.name === "データなし") {
+        container.innerHTML = `<div style="font-size: 12px; color: #666; padding: 6px;">※ この投稿に紐づく詳細カテゴリデータはありません。</div>`;
+        return;
+    }
+
+    let html = `<div style="font-size: 13px; color: #202124; padding: 4px;">`;
+    html += `<div style="font-weight: bold; color: #1a73e8; margin-bottom: 8px;">📁 ${rawData.name}</div>`;
+    
+    if (rawData.children && rawData.children.length > 0) {
+        html += `<ul style="margin: 0; padding-left: 20px; list-style-type: disc; display: flex; flex-direction: column; gap: 4px;">`;
+        rawData.children.forEach(child => {
+            html += `<li style="color: #3c4043;">${child.name}`;
+            if (child.children && child.children.length > 0) {
+                html += `<ul style="margin: 4px 0 0 0; padding-left: 20px; list-style-type: circle;">`;
+                child.children.forEach(grandChild => {
+                    html += `<li style="color: #5f6368; font-size: 12px;">${grandChild.name}</li>`;
+                });
+                html += `</ul>`;
+            }
+            html += `</li>`;
+        });
+        html += `</ul>`;
+    }
+    html += `</div>`;
+
+    container.innerHTML = html;
+}
+
+function toggleLogicTree(headerElement, postId) {
+    const parent = headerElement.parentElement;
+    let treeContainer = parent.querySelector('.tree-container');
+    
+    if (treeContainer) {
+        treeContainer.style.animation = 'fadeIn 0.2s ease-out reverse';
+        setTimeout(() => treeContainer.remove(), 180);
+        return;
+    }
+
+    parent.querySelectorAll('.tree-container').forEach(el => el.remove());
+
+    treeContainer = document.createElement('div');
+    treeContainer.className = 'tree-container';
+    treeContainer.innerHTML = `<div class="tree-canvas" style="min-height: auto; padding: 5px;"></div>`;
+    parent.appendChild(treeContainer);
+
+    const canvas = treeContainer.querySelector('.tree-canvas');
+    renderSimpleTree(canvas, postId);
+}
+
+async function showRegionStats() {
+    const displayArea = document.getElementById('mainDisplayArea');
+    if (!displayArea) return;
+    
+    displayArea.style.justifyContent = 'flex-start';
+    displayArea.innerHTML = `
+        <div class="analysis-card" style="width: 100%; box-sizing: border-box; text-align: center; padding: 40px;">
+            <h3 style="color: #1a73e8; margin-bottom: 20px;">読み込み中...</h3>
+        </div>
+    `;
+
+    try {
+        const response = await fetch(`${API_BASE_URL}/api/stats/regions`);
+        if (!response.ok) throw new Error("集計データの取得に失敗しました");
+        
+        const data = await response.json();
+        const wardCounts = data.ward_counts || {};
+        
+        let totalPosts = Object.values(wardCounts).reduce((a, b) => a + b, 0);
+        
+        if (totalPosts === 0) {
+            displayArea.innerHTML = `
+                <div class="analysis-card" style="width: 100%; box-sizing: border-box; text-align: center;">
+                    <h3 style="color: #202124; margin-bottom: 12px;">📊 神戸市 行政区別 投稿分布</h3>
+                    <p style="color: #5f6368; font-size: 14px;">まだ地域データが蓄積されていません。「Xから最新データを収集」を実行してください。</p>
+                </div>
+            `;
+            return;
+        }
+
+        let barsHtml = '';
+        for (const [ward, count] of Object.entries(wardCounts)) {
+            const percentage = ((count / totalPosts) * 100).toFixed(1);
+            barsHtml += `
+                <div style="margin-bottom: 16px; text-align: left;">
+                    <div style="display: flex; justify-content: space-between; font-size: 14px; margin-bottom: 6px; color: #202124;">
+                        <span>📍 ${ward}</span>
+                        <span style="font-weight: bold; color: #1a73e8;">${count} 件 (${percentage}%)</span>
+                    </div>
+                    <div style="background: #e8eaed; border-radius: 6px; height: 12px; width: 100%; overflow: hidden;">
+                        <div style="background: linear-gradient(90deg, #1a73e8, #9334e6); height: 100%; width: ${percentage}%; border-radius: 6px; transition: width 0.5s ease;"></div>
+                    </div>
+                </div>
+            `;
+        }
+
+        displayArea.innerHTML = `
+            <div class="analysis-card" style="width: 100%; box-sizing: border-box;">
+                <h3 style="color: #202124; font-size: 18px; margin-top: 0; margin-bottom: 8px; border-bottom: 1px solid #dadce0; padding-bottom: 12px;">📊 神戸市 行政区別 投稿分布・統計</h3>
+                <p style="color: #5f6368; font-size: 13px; margin-bottom: 24px;">データベースに蓄積された市民意見のエリア別内訳（総データ数: ${totalPosts} 件）</p>
+                <div style="display: flex; flex-direction: column; gap: 4px;">
+                    ${barsHtml}
+                </div>
+            </div>
+        `;
+
+        if (window.innerWidth <= 768) {
+            toggleSidebar();
+        }
+    } catch (error) {
+        console.error("地域別統計エラー:", error);
+        alert("地域別グラフの生成に失敗しました。");
+    }
+}
+</script>
+</body>
+</html>
