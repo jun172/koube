@@ -32,7 +32,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
 # 各種クライアントの初期化
 supabase: Client = get_supabase_client()
 x_client = XPostCollector()  
@@ -66,6 +65,10 @@ class PasswordResetSchema(BaseModel):
 
 class PasswordResetRequestSchema(BaseModel):
     email: str
+
+class TagFetchRequest(BaseModel):
+    tag: str
+    max_results: int = 10
 
 # --- 静的ファイル・フロントエンド配信設定 ---
 os.makedirs("static", exist_ok=True)
@@ -441,7 +444,8 @@ def get_region_stats():
     except Exception as e:
         print(f"Region stats error: {e}")
         return {"ward_counts": {}, "town_counts": {}}
-    
+
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8080))
     uvicorn.run("main:app", host="0.0.0.0", port=port)

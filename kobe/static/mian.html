@@ -172,7 +172,6 @@
 
             <button class="new-chat-btn" onclick="triggerAiAnalysis()" style="margin-top: 12px;">AI一括解析を実行</button>
             <button class="new-chat-btn stop-btn" onclick="stopAiAnalysis()">🛑 AI解析を停止</button>
-            <button class="new-chat-btn" onclick="showRegionStats()" style="background-color: #c58af9; color: #131314; margin-top: 12px;">📊 地域別投稿グラフを表示</button>
         </aside>
 
         <!-- メイン画面 -->
@@ -362,7 +361,7 @@ function renderHashtags(text) {
 }
 
 async function triggerXCollection() {
-    if (!confirm("CSVマスターデータ（町名・駅名・感情ワード）に基づいて全自動でXデータ収集とAI解析を開始しますか？")) {
+    if (!confirm("CSVマスターデータ（町名・駅名・感情ワード）とキーワード基づいて全自動でXデータ収集とAI解析を開始しますか？")) {
         return;
     }
 
@@ -497,7 +496,7 @@ function renderPostsContainer(queryTitle, posts, currentTab = 'all', historyId =
                     <div class="post-header" onclick="toggleLogicTree(this, '${post.id}')">
 
                         <div class="post-summary"> ${summaryText}</div>
-                        <div class="post-summary">📌 ${summaryText}</div>
+                        <div class="post-summary">　${summaryText}</div>
 
                         <div class="post-original">${originalText}</div>
                         ${tagsHtml}
@@ -588,73 +587,6 @@ function toggleLogicTree(headerElement, postId) {
     renderSimpleTree(canvas, postId);
 }
 
-async function showRegionStats() {
-    const displayArea = document.getElementById('mainDisplayArea');
-    if (!displayArea) return;
-    
-    displayArea.style.justifyContent = 'flex-start';
-    displayArea.innerHTML = `
-        <div class="analysis-card" style="width: 100%; box-sizing: border-box; text-align: center; padding: 40px;">
-            <h3 style="color: #1a73e8; margin-bottom: 20px;">読み込み中...</h3>
-        </div>
-    `;
-
-    try {
-        const response = await fetch(`${API_BASE_URL}/api/stats/regions`);
-        if (!response.ok) throw new Error("集計データの取得に失敗しました");
-        
-        const data = await response.json();
-        const wardCounts = data.ward_counts || {};
-        
-        let totalPosts = Object.values(wardCounts).reduce((a, b) => a + b, 0);
-        
-        if (totalPosts === 0) {
-            displayArea.innerHTML = `
-                <div class="analysis-card" style="width: 100%; box-sizing: border-box; text-align: center;">
-
-                    <h3 style="color: #202124; margin-bottom: 12px;"> 神戸市 行政区別 投稿分布</h3>
-                    <h3 style="color: #202124; margin-bottom: 12px;">📊 神戸市 行政区別 投稿分布</h3>
-                    <p style="color: #5f6368; font-size: 14px;">まだ地域データが蓄積されていません。「Xから最新データを収集」を実行してください。</p>
-                </div>
-            `;
-            return;
-        }
-
-        let barsHtml = '';
-        for (const [ward, count] of Object.entries(wardCounts)) {
-            const percentage = ((count / totalPosts) * 100).toFixed(1);
-            barsHtml += `
-                <div style="margin-bottom: 16px; text-align: left;">
-                    <div style="display: flex; justify-content: space-between; font-size: 14px; margin-bottom: 6px; color: #202124;">
-                        <span> ${ward}</span>
-                        <span>📍 ${ward}</span>
-                        <span style="font-weight: bold; color: #1a73e8;">${count} 件 (${percentage}%)</span>
-                    </div>
-                    <div style="background: #e8eaed; border-radius: 6px; height: 12px; width: 100%; overflow: hidden;">
-                        <div style="background: linear-gradient(90deg, #1a73e8, #9334e6); height: 100%; width: ${percentage}%; border-radius: 6px; transition: width 0.5s ease;"></div>
-                    </div>
-                </div>
-            `;
-        }
-
-        displayArea.innerHTML = `
-            <div class="analysis-card" style="width: 100%; box-sizing: border-box;">
-                <h3 style="color: #202124; font-size: 18px; margin-top: 0; margin-bottom: 8px; border-bottom: 1px solid #dadce0; padding-bottom: 12px;">📊 神戸市 行政区別 投稿分布・統計</h3>
-                <p style="color: #5f6368; font-size: 13px; margin-bottom: 24px;">データベースに蓄積された市民意見のエリア別内訳（総データ数: ${totalPosts} 件）</p>
-                <div style="display: flex; flex-direction: column; gap: 4px;">
-                    ${barsHtml}
-                </div>
-            </div>
-        `;
-
-        if (window.innerWidth <= 768) {
-            toggleSidebar();
-        }
-    } catch (error) {
-        console.error("地域別統計エラー:", error);
-        alert("地域別グラフの生成に失敗しました。");
-    }
-}
 </script>
 </body>
 </html>

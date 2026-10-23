@@ -8,6 +8,9 @@ from dotenv import load_dotenv
 import pandas as pd
 import re
 
+# 停止フラグのインポート
+from stop_flag import is_x_stop_requested, reset_stop_x
+
 load_dotenv()  
 
 X_API_BEARER_TOKEN = os.environ.get("X_API_BEARER_TOKEN")
@@ -20,7 +23,6 @@ class XPostCollector:
         }
         self.supabase = get_supabase_client()
         
-        # 1. 各CSVからリストを個別にロード（city と town を分離）
         self.cities = self._load_csv_column(kobe_csv, 'city')
         self.towns = self._load_csv_column(kobe_csv, 'town')
         self.stations = self._load_csv_column(stations_csv, 'station_name')
@@ -29,7 +31,7 @@ class XPostCollector:
         self.state_dir = "collection_states"
         os.makedirs(self.state_dir, exist_ok=True)
 
-        print(f"📌 ロード完了 -> 行政:{len(self.cities)}　町名: {len(self.towns)}件 / 駅名: {len(self.stations)}件 / 感情ワード(ポジ/ネガ): {len(self.positive_keywords)}/{len(self.negative_keywords)}件")
+        print(f"📌 ロード完了 -> 行政:{len(self.cities)} 町名: {len(self.towns)}件 / 駅名: {len(self.stations)}件 / 感情ワード(ポジ/ネガ): {len(self.positive_keywords)}/{len(self.negative_keywords)}件")
 
     def _load_csv_column(self, path: str, col_name: str) -> List[str]:
         items = []
@@ -38,9 +40,7 @@ class XPostCollector:
             if col_name in df.columns:
                 for _, row in df.iterrows():
                     val = str(row.get(col_name, '')).strip()
-                    # 無効な値や除外すべき文字列をスキップ
                     if val and val != "nan" and "以下に掲載がない場合" not in val:
-                        # 「神戸」「神戸市」単体の混入をここで完全にブロック
                         if val not in ["神戸", "神戸市"]:
                             if val not in items:
                                 items.append(val)
@@ -61,7 +61,6 @@ class XPostCollector:
         return pos, neg
 
     def _get_one_item_with_rollover(self, items: List[str], state_name: str) -> Tuple[str, bool]:
-        """リストから1件ずつ順に取り出し、末尾に達したらTrueを返す"""
         if not items:
             return "", True
             
@@ -89,20 +88,13 @@ class XPostCollector:
         return item, is_finished
 
     def fetch_posts_by_keyword(self, max_results: int = 10) -> bool:
-        """
-        行政区、町名、駅名、および感情キーワードを順次取得し、
-        「(エリア群のOR) AND (感情群のOR)」というAND分析クエリを構築して検索を実行する。
-        （※「神戸」「神戸市」単体は一切含めない）
-        """
         city, cities_finished = self._get_one_item_with_rollover(self.cities, "cities")
         town, towns_finished = self._get_one_item_with_rollover(self.towns, "towns")
         station, stations_finished = self._get_one_item_with_rollover(self.stations, "stations")
         
-        # ポジティブ・ネガティブをそれぞれ1件ずつ取得
         pos_keyword, pos_finished = self._get_one_item_with_rollover(self.positive_keywords, "positive_sentiments")
         neg_keyword, neg_finished = self._get_one_item_with_rollover(self.negative_keywords, "negative_sentiments")
 
-        # 1. 地域・エリア側のORプール（「神戸」「神戸市」を完全に除外した具体的な地名・駅名のみ）
         area_parts = []
         for val in [city, town, station]:
             if val and str(val).strip() and str(val).strip() != "nan":
@@ -110,10 +102,8 @@ class XPostCollector:
                 if cleaned_val not in ["神戸", "神戸市"] and "以下に掲載がない場合" not in cleaned_val:
                     area_parts.append(f'"{cleaned_val}"')
         
-        # もし有効なエリアパーツが一つもない場合のフォールバック（例：最初の有効な町名など）
         area_query = " OR ".join(area_parts) if area_parts else '"東灘区"'
 
-        # 2. 感情側のORプール（ポジティブワード OR ネガティブワード）
         sentiment_or_list = []
         if pos_keyword and str(pos_keyword).strip() and str(pos_keyword).strip() != "nan":
             sentiment_or_list.append(f'"{pos_keyword}"')
@@ -182,7 +172,6 @@ class XPostCollector:
                     print(f"❌ DB Error: {db_e}")
 
             print(f"📊 この検索での新規保存: {saved_count} 件")
-            # すべての主要リストが終了判定になったらTrueを返す
             return towns_finished and stations_finished and cities_finished
 
         except Exception as e:
@@ -192,10 +181,18 @@ class XPostCollector:
     def run_full_scan(self):
         print("=== 行政区・町名・駅名・感情ワードによるAND分析全件フルスキャン（whileループ）を開始 ===")
         
+        # 起動時に停止フラグをリセット
+        reset_stop_x()
+        
         loop_count = 0
         max_safety_loops = max(len(self.towns), len(self.stations), len(self.cities)) * 2 + 50
 
         while loop_count < max_safety_loops:
+            # ここでウェブサイトからの停止リクエストを毎回チェック
+            if is_x_stop_requested():
+                print("🛑 ユーザーからの停止リクエストを検知したため、X収集を安全に中断します。")
+                break
+
             loop_count += 1
             print(f"\n--- スキャンステップ: {loop_count} / 最大 {max_safety_loops} ---")
             
@@ -207,7 +204,7 @@ class XPostCollector:
                 
             time.sleep(2)
 
-        print("=== すべての全自動スキャンが完了しました ===")
+        print("=== すべての全自動スキャン（または中断）が完了しました ===")
 
 if __name__ == "__main__":
     collector = XPostCollector()
