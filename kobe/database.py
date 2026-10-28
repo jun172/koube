@@ -11,6 +11,7 @@ load_dotenv()
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY") # または GOOGLE_API_KEY
+SUPABASE_SERVICE_ROLE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
 
 if not SUPABASE_URL or not SUPABASE_KEY:
     raise ValueError("SupabaseのURLまたはAPIキーが環境変数に設定されていません。")
@@ -18,14 +19,18 @@ if not SUPABASE_URL or not SUPABASE_KEY:
 # シングルトンとしてSupabaseクライアントを初期化
 _supabase_client: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
+_supabase_admin_client: Client = create_client(
+    SUPABASE_URL, 
+    SUPABASE_SERVICE_ROLE_KEY if SUPABASE_SERVICE_ROLE_KEY else SUPABASE_KEY
+)
+
 def get_supabase_client() -> Client:
-    """
-    Supabaseクライアントインスタンスを返却する
-    """
+    """通常用のSupabaseクライアントを返却する"""
     return _supabase_client
-
-
 # --- Google Cloud Natural Language API による解析関数 ---
+def get_supabase_admin_client() -> Client:
+    """管理者権限（service_role）を持つSupabaseクライアントを返却する"""
+    return _supabase_admin_client
 
 def analyze_text_with_natural_language(text: str) -> Dict[str, Any]:
     """

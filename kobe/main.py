@@ -6,11 +6,12 @@ from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
 from supabase import Client
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse,Response
 from datetime import datetime, timezone
 import uuid
 import uvicorn
-
+from fastapi import FastAPI, HTTPException, Response, Request
+from fastapi.responses import FileResponse, RedirectResponse
 # 自作モジュール
 from ai import *
 from database import *
@@ -21,7 +22,10 @@ from stop_flag import request_stop_ai, request_stop_x
 app = FastAPI(
     title="Unmute City Backend",
     description="SNSから市民の不満や課題を収集・AI分析し、ロジックツリーを生成するAPI",
-    version="1.0.0"
+    version="1.0.0",
+    docs_url=None,      # /docs を無効化
+    redoc_url=None,     # /redoc を無効化
+    openapi_url=None    # /openapi.json を無効化
 )
 
 # CORS設定
@@ -70,6 +74,10 @@ class TagFetchRequest(BaseModel):
     tag: str
     max_results: int = 10
 
+class CollectionRequest(BaseModel):
+    tags: List[str] = []
+    mode: str = "or"  # "or" または "and"
+    
 # --- 静的ファイル・フロントエンド配信設定 ---
 os.makedirs("static", exist_ok=True)
 app.mount("/static", StaticFiles(directory="static"), name="static")
@@ -82,7 +90,6 @@ def serve_root():
     return FileResponse(path)
 
 # --- 認証系 API ---
-
 @app.post("/api/signup")
 def signup(user: SignupSchema):
     try:
@@ -106,6 +113,8 @@ def login(user: UserSchema):
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e)) 
 
+
+RESEND_FROM = "神戸市SNS分析ダッシュボード <info@kobe-city.bid>"
 @app.put("/api/users/password-reset")
 def reset_password(data: PasswordResetSchema):
     try:
@@ -123,15 +132,40 @@ def reset_password(data: PasswordResetSchema):
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
+
 @app.post("/api/forgot-password")
 def forgot_password(data: PasswordResetRequestSchema):
     try:
-        users_response = supabase.auth.admin.list_users()
-        target_user = next((u for u in users_response if getattr(u, 'email', None) == data.email), None)
+        resend.api_key = os.environ.get("RESEND_API_KEY", "")
+        
+        # 管理者権限を持つクライアントを取得する
+        admin_supabase = get_supabase_admin_client()
+        
+        # 管理者用クライアントでユーザー一覧を取得
+        users_response = admin_supabase.auth.admin.list_users()
+        
+        users_list = []
+        if isinstance(users_response, list):
+            users_list = users_response
+        elif hasattr(users_response, "users"):
+            users_list = users_response.users  # type: ignore
+        elif isinstance(users_response, dict):
+            users_list = users_response.get("users", [])
+
+        target_user = None
+        for u in users_list:
+            u_email = getattr(u, "email", None) or (u.get("email") if isinstance(u, dict) else None)
+            if u_email == data.email:
+                target_user = u
+                break
+        
+        # 該当ユーザーが存在しない場合は、セキュリティのためエラーを出さずにダミー応答を返す
         if not target_user:
-            raise HTTPException(status_code=404, detail="登録されていないメールアドレスです")
+            return {"message": "パスワード再設定メールを送信しました"}
+            
         reset_link = "https://koube-production.up.railway.app/reset2.html"
         
+        # --- RESEND_FROM（info@kobe-city.bid）を使用してメール送信 ---
         params = {
             "from": RESEND_FROM,
             "to": [data.email],
@@ -155,32 +189,40 @@ def forgot_password(data: PasswordResetRequestSchema):
     except HTTPException as he:
         raise he
     except Exception as e:
+        print(f"Password reset error: {str(e)}")
         raise HTTPException(status_code=400, detail=str(e))
 
 # 1. SNSデータ収集 & AI解析トリガーAPI (バックグラウンド実行)
 @app.post("/api/collect")
-async def trigger_collection(background_tasks: BackgroundTasks):
+async def trigger_collection(req: Optional[CollectionRequest] = None, background_tasks: BackgroundTasks = BackgroundTasks()):
     """
-    x.py を直接呼び出し、CSVマスター（町名・駅名・感情ワード）を使った
-    完全自動AND/OR分析・収集パイプラインをバックグラウンドで起動する
+    フロントエンドから渡されたタグ（AND/OR条件）を使い、
+    x.py を通じてXデータ収集パイプラインをバックグラウンドで起動する
     """
+    # ご希望いただいた安全な三項演算子の書き方でタグとモードを取得
+    tags = req.tags if req and req.tags else ["神戸", "三宮", "道路", "不満"]
+    mode = req.mode if req and req.mode else "or"
+
     def run_pipeline():
-        print("=== 【x.py 連携】全自動AND/ORキーワード分析・収集パイプラインを開始 ===")
+        print(f"=== 【x.py 連携】タグ収集開始 (モード: {mode.upper()}, タグ: {tags}) ===")
         try:
-            # x.py で定義されている XPostCollector のインスタンス（x_client）を利用
-            if hasattr(x_client, "run_full_scan"):
-                # 全件フルスキャン（whileループで最後まで回す）を実行
-                x_client.run_full_scan()
-            elif hasattr(x_client, "fetch_posts_by_keyword"):
-                # フルスキャンが無い場合は1回分のフェッチを実行
-                x_client.fetch_posts_by_keyword(max_results=10)
+            # x.py 側にタグとモードを渡すメソッドがある場合
+            if hasattr(x_client, "run_scan_with_tags"):
+                x_client.run_scan_with_tags(tags=tags, mode=mode)
+            elif hasattr(x_client, "run_full_scan"):
+                # メソッドがない場合のフォールバック
+                x_client.run_scan_with_tags()
             else:
                 print("⚠️ x_client に実行メソッドが見つかりません。")
         except Exception as e:
             print(f"💥 X収集パイプライン実行エラー: {e}")
 
     background_tasks.add_task(run_pipeline)
-    return {"message": "x.py を用いた全自動データ収集・AI分析パイプラインがバックグラウンドで開始されました。"}
+    return {
+        "message": f"タグ ({tags}) を用いた {mode.upper()} 条件でのXデータ収集を開始しました。",
+        "tags": tags,
+        "mode": mode
+    }
 # 2. 課題・ロジックツリーカタログ取得API
 @app.get("/api/issues")
 def get_issues(history_id: Optional[str] = Query(None)):
@@ -400,51 +442,6 @@ def get_keywords():
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
-# --- 地域別・行政区別の集計統計API ---
-@app.get("/api/stats/regions")
-def get_region_stats():
-    try:
-        response = supabase.table("sns_posts").select("*").execute()
-        ward_counts = {}
-        town_counts = {}  
-        
-        if response.data and isinstance(response.data, list):
-            ai_engine = get_ai_engine()
-            for p in response.data:
-                if isinstance(p, dict):
-                    text = str(p.get("post_text") or "")
-                    if not text.strip():
-                        continue
-                    
-                    res = ai_engine.regional_classifier.classify_text(text)
-                    
-                    if isinstance(res, dict):
-                        ward = res.get("ward") or "その他・分類不能"
-                        area = res.get("matched_area") or "その他・主要駅"
-                    else:
-                        ward = "その他・分類不能"
-                        area = "その他・主要`駅"
-
-                    if str(ward) == "None" or not ward:
-                        ward = "その他・分類不能"
-                    if str(area) == "None" or not area:
-                        area = "その他・主要駅"
-
-                    ward_counts[ward] = ward_counts.get(ward, 0) + 1
-                    town_counts[area] = town_counts.get(area, 0) + 1
-                        
-        sorted_wards = dict(sorted(ward_counts.items(), key=lambda x: x[1], reverse=True))
-        sorted_towns = dict(sorted(town_counts.items(), key=lambda x: x[1], reverse=True))
-        
-        return {
-            "ward_counts": sorted_wards,
-            "town_counts": sorted_towns
-        }
-    except Exception as e:
-        print(f"Region stats error: {e}")
-        return {"ward_counts": {}, "town_counts": {}}
-
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8080))

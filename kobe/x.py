@@ -8,30 +8,42 @@ from dotenv import load_dotenv
 import pandas as pd
 import re
 
-# 停止フラグのインポート
-from stop_flag import is_x_stop_requested, reset_stop_x
-
 load_dotenv()  
 
 X_API_BEARER_TOKEN = os.environ.get("X_API_BEARER_TOKEN")
 SEARCH_ENDPOINT = "https://api.twitter.com/2/tweets/search/all"
 
 class XPostCollector:
-    def __init__(self, kobe_csv: str = "kobe.csv", stations_csv: str = "kobe_stations.csv", sentiment_csv: str = "kobe_sentiment_keywords.csv"):
+    def __init__(
+        self, 
+        kobe_csv: str = "kobe.csv", 
+        stations_csv: str = "kobe_stations.csv", 
+        sentiment_csv: str = "kobe_sentiment_keywords.csv",
+        exclude_csv: str = "exclude_keywords.csv"
+    ):
         self.headers = {
             "Authorization": f"Bearer {X_API_BEARER_TOKEN}"
         }
         self.supabase = get_supabase_client()
         
+        # 1. 各CSVからリストをロード
         self.cities = self._load_csv_column(kobe_csv, 'city')
         self.towns = self._load_csv_column(kobe_csv, 'town')
         self.stations = self._load_csv_column(stations_csv, 'station_name')
-        self.positive_keywords, self.negative_keywords = self._load_sentiments(sentiment_csv)
         
+        # 除外キーワードCSVのロード
+        self.exclude_keywords = self._load_exclude_keywords(exclude_csv)
+        
+        # ポジティブは除外し、ネガティブ（不満・課題）ワードだけに特化
+        _, self.negative_keywords = self._load_sentiments(sentiment_csv)
+        
+        # 追加の不満・行政要望ワード
+        self.complaint_suffixes = ["不満", "改善", "どうにかして", "ひどい", "困る", "危険", "汚い", "遅い", "高い", "対応して", "何とかして"]
+
         self.state_dir = "collection_states"
         os.makedirs(self.state_dir, exist_ok=True)
 
-        print(f"📌 ロード完了 -> 行政:{len(self.cities)} 町名: {len(self.towns)}件 / 駅名: {len(self.stations)}件 / 感情ワード(ポジ/ネガ): {len(self.positive_keywords)}/{len(self.negative_keywords)}件")
+        print(f"📌 ロード完了 -> 行政区:{len(self.cities)}件 / 町名: {len(self.towns)}件 / 駅名: {len(self.stations)}件 / ネガティブワード: {len(self.negative_keywords)}件 / 除外ワード: {len(self.exclude_keywords)}件")
 
     def _load_csv_column(self, path: str, col_name: str) -> List[str]:
         items = []
@@ -41,12 +53,25 @@ class XPostCollector:
                 for _, row in df.iterrows():
                     val = str(row.get(col_name, '')).strip()
                     if val and val != "nan" and "以下に掲載がない場合" not in val:
-                        if val not in ["神戸", "神戸市"]:
-                            if val not in items:
-                                items.append(val)
+                        if val not in ["神戸", "神戸市"] and val not in items:
+                            items.append(val)
         except FileNotFoundError:
             print(f"⚠️ 警告: {path} が見つかりません。")
         return items
+
+    def _load_exclude_keywords(self, path: str) -> List[str]:
+        """ exclude_keywords.csv から除外ワードを取得 """
+        keywords = []
+        try:
+            df = pd.read_csv(path)
+            if 'keyword' in df.columns:
+                for val in df['keyword'].dropna():
+                    kw = str(val).strip()
+                    if kw and kw != "nan":
+                        keywords.append(kw)
+        except FileNotFoundError:
+            print(f"⚠️ 警告: 除外キーワードファイル ({path}) が見つかりません。スキップします。")
+        return keywords
 
     def _load_sentiments(self, path: str) -> Tuple[List[str], List[str]]:
         pos, neg = [], []
@@ -89,38 +114,32 @@ class XPostCollector:
 
     def fetch_posts_by_keyword(self, max_results: int = 10) -> bool:
         city, cities_finished = self._get_one_item_with_rollover(self.cities, "cities")
-        town, towns_finished = self._get_one_item_with_rollover(self.towns, "towns")
         station, stations_finished = self._get_one_item_with_rollover(self.stations, "stations")
-        
-        pos_keyword, pos_finished = self._get_one_item_with_rollover(self.positive_keywords, "positive_sentiments")
         neg_keyword, neg_finished = self._get_one_item_with_rollover(self.negative_keywords, "negative_sentiments")
 
-        area_parts = []
-        for val in [city, town, station]:
-            if val and str(val).strip() and str(val).strip() != "nan":
-                cleaned_val = str(val).strip()
-                if cleaned_val not in ["神戸", "神戸市"] and "以下に掲載がない場合" not in cleaned_val:
-                    area_parts.append(f'"{cleaned_val}"')
+        area_targets = []
+        if city: area_targets.append(f'"{city}"')
+        if station: area_targets.append(f'"{station}"')
         
-        area_query = " OR ".join(area_parts) if area_parts else '"東灘区"'
-
-        sentiment_or_list = []
-        if pos_keyword and str(pos_keyword).strip() and str(pos_keyword).strip() != "nan":
-            sentiment_or_list.append(f'"{pos_keyword}"')
-        if neg_keyword and str(neg_keyword).strip() and str(neg_keyword).strip() != "nan":
-            sentiment_or_list.append(f'"{neg_keyword}"')
+        area_query = " OR ".join(area_targets) if area_targets else '"神戸市"'
         
-        sentiment_query = " OR ".join(sentiment_or_list) if sentiment_or_list else '"最高" OR "不満"'
+        sentiment_list = []
+        if neg_keyword: sentiment_list.append(f'"{neg_keyword}"')
+        for suffix in ["不満", "改善", "困る", "ひどい", "どうにかして"]:
+            sentiment_list.append(f'"{suffix}"')
+            
+        sentiment_query = " OR ".join(set(sentiment_list))
 
         exclusions = [
             "-is:retweet", "-PR", "-広告", "-宣伝", "-求人",
-            "-AV", "-アダルト", "-風俗", "-マッチングアプリ",
-            "-has:links", "-is:nullcast", "-ニュース", "-速報", "-新聞"
+            "-AV", "-アダルト", "-風俗", "-株", "-FX", "-投資",
+            "-has:links", "-ニュース", "-速報", "-天気予報"
         ]
         
-        query = f'({area_query}) ({sentiment_query}) {" ".join(exclusions)} lang:ja'
-        print(f"\n🔍 検索ターゲット [行政区: {city} / 町名: {town} / 駅名: {station} / 感情(ポジ/ネガ): {pos_keyword} / {neg_keyword}]")
-        print(f"🚀 X検索実行ANDクエリ: {query}")
+        query = f'(神戸市 OR ({area_query})) ({sentiment_query}) {" ".join(exclusions)} lang:ja'
+        
+        print(f"\n🔍 検索ターゲット [行政: {city} / 駅: {station} / ネガティブ: {neg_keyword}]")
+        print(f"🚀 精度向上クエリ: {query}")
 
         params = {
             "query": query,
@@ -134,12 +153,12 @@ class XPostCollector:
             response = requests.get(SEARCH_ENDPOINT, headers=self.headers, params=params)
             
             if response.status_code == 429:
-                print("⚠️ API Error: X APIのレート制限に達しました。15分待機します...")
+                print("⚠️ API Error: レート制限に達しました。15分待機します...")
                 time.sleep(900)
                 return False
             elif response.status_code != 200:
                 print(f"❌ X API Error: {response.status_code}\n{response.text}")
-                return towns_finished and stations_finished
+                return stations_finished and cities_finished
 
             data = response.json()
             tweets = data.get("data", [])
@@ -148,8 +167,24 @@ class XPostCollector:
             saved_count = 0
             for tweet in tweets:
                 text = tweet.get("text", "")
+                
+                # ----------------------------------------------------
+                # 🛑 【事前除外フィルタ】 exclude_keywords.csv のチェック
+                # ----------------------------------------------------
+                if any(bad_word in text for bad_word in self.exclude_keywords):
+                    # スパム・広告・求人・グルメ等のノイズ投稿は保存せずスキップ
+                    continue
+
+                # 1. 短すぎるもの、改行が多すぎるものを除外
                 clean_text = re.sub(r'https?://\S+|#\w+', '', text).strip()
-                if len(clean_text) < 8 or text.count("\n") > 5:
+                if len(clean_text) < 10 or text.count("\n") > 4:
+                    continue
+                
+                # 2. 不満文脈キーワードの再チェック
+                complaint_words = ["不満", "改善", "行政", "市役所", "市長", "税金", "バス", "道路", "公園", "ゴミ", "騒音", "危険", "困", "ひど", "対応"]
+                has_complaint_context = any(word in text for word in complaint_words)
+                
+                if not has_complaint_context:
                     continue
 
                 metrics = tweet.get("public_metrics", {})
@@ -171,28 +206,20 @@ class XPostCollector:
                 except Exception as db_e:
                     print(f"❌ DB Error: {db_e}")
 
-            print(f"📊 この検索での新規保存: {saved_count} 件")
-            return towns_finished and stations_finished and cities_finished
+            print(f"📊 フィルタリング後の新規保存件数: {saved_count} 件")
+            return stations_finished and cities_finished and neg_finished
 
         except Exception as e:
             print(f"💥 通信エラー: {e}")
             return False
 
-    def run_full_scan(self):
-        print("=== 行政区・町名・駅名・感情ワードによるAND分析全件フルスキャン（whileループ）を開始 ===")
-        
-        # 起動時に停止フラグをリセット
-        reset_stop_x()
+    def run_scan_with_tags(self, tags: Optional[List[str]] = None, mode: str = "or"):
+        print("=== 精度を高めた神戸市不満投稿のフルスキャンを開始 ===")
         
         loop_count = 0
-        max_safety_loops = max(len(self.towns), len(self.stations), len(self.cities)) * 2 + 50
+        max_safety_loops = max(len(self.stations), len(self.cities), len(self.negative_keywords)) * 2 + 50
 
         while loop_count < max_safety_loops:
-            # ここでウェブサイトからの停止リクエストを毎回チェック
-            if is_x_stop_requested():
-                print("🛑 ユーザーからの停止リクエストを検知したため、X収集を安全に中断します。")
-                break
-
             loop_count += 1
             print(f"\n--- スキャンステップ: {loop_count} / 最大 {max_safety_loops} ---")
             
@@ -204,8 +231,8 @@ class XPostCollector:
                 
             time.sleep(2)
 
-        print("=== すべての全自動スキャン（または中断）が完了しました ===")
+        print("=== 全自動スキャンが完了しました ===")
 
 if __name__ == "__main__":
     collector = XPostCollector()
-    collector.run_full_scan()
+    collector.run_scan_with_tags()

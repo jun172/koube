@@ -172,6 +172,8 @@
 
             <button class="new-chat-btn" onclick="triggerAiAnalysis()" style="margin-top: 12px;">AI一括解析を実行</button>
             <button class="new-chat-btn stop-btn" onclick="stopAiAnalysis()">🛑 AI解析を停止</button>
+            <!-- HTMLの例 -->
+            <button id="logout-btn" onclick="handleLogout()" class="...">ログアウト</button>
         </aside>
 
         <!-- メイン画面 -->
@@ -228,6 +230,7 @@ window.onload = async function() {
     }
 
     renderTags();
+    updateActiveTagsUI(); // 初期化時にタグ表示UIを更新
 };
 
 function handleSearchKeyDown(event) {
@@ -294,6 +297,9 @@ function renderTags() {
 
     html += `<button class="add-tag-btn" onclick="showAddTagInput()">+ 追加</button>`;
     container.innerHTML = html;
+    
+    // タグが変更されたらUI側も同期して更新
+    updateActiveTagsUI();
 }
 
 function showAddTagInput() {
@@ -360,19 +366,60 @@ function renderHashtags(text) {
         '</div>';
 }
 
-async function triggerXCollection() {
-    if (!confirm("CSVマスターデータ（町名・駅名・感情ワード）とキーワード基づいて全自動でXデータ収集とAI解析を開始しますか？")) {
+// --- 画面上のタグ表示をリアルタイム更新する関数 ---
+function updateActiveTagsUI() {
+    const activeTagsList = document.getElementById('activeTagsList');
+    const activeModeBadge = document.getElementById('activeModeBadge');
+
+    if (!customTags || customTags.length === 0) {
+        if (activeTagsList) activeTagsList.textContent = "なし（未指定）";
         return;
     }
+
+    if (activeTagsList) {
+        activeTagsList.textContent = customTags.join(', ');
+    }
+
+    const modeSelect = document.getElementById('collectionMode');
+    const currentMode = modeSelect ? modeSelect.value.toUpperCase() : 'OR';
+    
+    if (activeModeBadge) {
+        activeModeBadge.textContent = `${currentMode}検索`;
+    }
+}
+
+// --- Xデータ収集トリガー関数（カスタムタグをバックエンドへ送信） ---
+async function triggerXCollection() {
+    const tagsToSend = customTags && customTags.length > 0 
+        ? customTags 
+        : ['神戸市', '三宮', '不満', '道路'];
+
+    const modeSelect = document.getElementById('collectionMode');
+    const selectedMode = modeSelect ? modeSelect.value : 'or';
+
+    const tagsDisplayStr = tagsToSend.join(', ');
+    if (!confirm(`以下の指定タグ【${selectedMode.toUpperCase()}条件】でXデータ収集とAI解析を開始しますか？\n\n📌 指定タグ: [ ${tagsDisplayStr} ]`)) {
+        return;
+    }
+
+    const payload = {
+        tags: tagsToSend,
+        mode: selectedMode
+    };
+
+    console.log("送信するカスタムタグ:", tagsToSend);
 
     try {
         const response = await fetch(`${API_BASE_URL}/api/collect`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' }
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
         });
         
         if (!response.ok) throw new Error("APIの呼び出しに失敗しました");
-        alert("バックグラウンドでCSVマスターによる全自動Xデータ収集とAI解析を開始しました！");
+        const data = await response.json();
+        
+        alert(`【収集開始】\n対象タグ: ${tagsDisplayStr}\n\n` + (data.message || "全自動Xデータ収集を開始しました！"));
     } catch (error) {
         console.error("収集エラー:", error);
         alert("データの収集開始に失敗しました。");
@@ -471,7 +518,6 @@ function renderPostsContainer(queryTitle, posts, currentTab = 'all', historyId =
             let dateStr = '';
             if (post.collected_at) {
                 const dateObj = new Date(post.collected_at);
-                dateStr = `<span class="date-badge"> 🕒${dateObj.toLocaleString()}</span>`;
                 dateStr = `<span class="date-badge"> 🕒 ${dateObj.toLocaleString()}</span>`;
             }
 
@@ -494,10 +540,7 @@ function renderPostsContainer(queryTitle, posts, currentTab = 'all', historyId =
             postsHtml += `
                 <div class="post-item">
                     <div class="post-header" onclick="toggleLogicTree(this, '${post.id}')">
-
                         <div class="post-summary"> ${summaryText}</div>
-                        <div class="post-summary">　${summaryText}</div>
-
                         <div class="post-original">${originalText}</div>
                         ${tagsHtml}
                         <div class="post-footer">
@@ -585,6 +628,20 @@ function toggleLogicTree(headerElement, postId) {
 
     const canvas = treeContainer.querySelector('.tree-canvas');
     renderSimpleTree(canvas, postId);
+}
+async function handleLogout() {
+    // 例: ローカルストレージにトークンを保存している場合
+    localStorage.removeItem("supabase.auth.token"); // または該当するキー
+    
+    // バックエンドにログアウト通知を送る場合
+    try {
+        await fetch("/api/logout", { method: "POST" });
+    } catch (e) {
+        console.error("ログアウトエラー", e);
+    }
+
+    // ログイン画面（ルート）へ強制リダイレクト
+    window.location.href = "/";
 }
 
 </script>
