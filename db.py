@@ -32,8 +32,7 @@ def insert_sns_post(post_data: dict):
 new_post = {
     "platform": "X",#プラットフォーム　スレッズ　X Yahoo!ニュース
     "original_post_id": f"test_post_{int(time.time())}",  # 毎回ユニークなIDになるようにする
-    "post_text": "神戸市は住民税が高すぎる",
-}
+    "post_text": "",}
 
 # コメントアウトを外して実行
 if __name__ == "__main__":

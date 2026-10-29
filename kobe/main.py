@@ -313,29 +313,31 @@ def serve_reset2():
     return FileResponse("static/reset2.html")
 
 # --- キーワード検索 & Web表示用API ---
+# --- キーワード検索 & Web表示用API ---
 @app.get("/api/search")
 def search_issues(q: str = Query(..., description="検索キーワード")):
     try:
-        # 修正の例：まずは sns_posts の基本情報と likes_count 等だけで安全に検索する
+        # sns_posts テーブルからキーワードに一致するものを取得
         response = supabase.table("sns_posts").select(
-            "id, platform, post_text, likes_count, collected_at"
+            "id, platform, post_text, likes, collected_at"
         ).ilike("post_text", f"%{q}%").order("collected_at", desc=True).execute()
         
         posts = []
         if response.data and isinstance(response.data, list):
             for item in response.data:
-                # Supabaseのオブジェクト形式に合わせてドットアクセスに変更
+                post_item = item if isinstance(item, dict) else {}
+                
                 posts.append({
-                    "id": getattr(item, "id", None) if not isinstance(item, dict) else item.get("id"),
-                    "summary": getattr(item, "ai_summary", None) if not isinstance(item, dict) else item.get("ai_summary"),
-                    "post_text": getattr(item, "post_text", None) if not isinstance(item, dict) else item.get("post_text"),
-                    "matched_area": getattr(item, "matched_area", None) if not isinstance(item, dict) else item.get("matched_area"),
-                    "ward": getattr(item, "ward", None) if not isinstance(item, dict) else item.get("ward"),
-                    "likes": getattr(item, "likes_count", 0) if not isinstance(item, dict) else item.get("likes_count", 0),
-                    "topic_key": getattr(item, "platform", "X") if not isinstance(item, dict) else item.get("platform", "X"),
-                    "collected_at": getattr(item, "collected_at", None) if not isinstance(item, dict) else item.get("collected_at"),
-                    "sentiment_score": getattr(item, "sentiment_score", 0.0) if not isinstance(item, dict) else item.get("sentiment_score", 0.0),
-                    "priority_score": getattr(item, "total_priority_score", 0) if not isinstance(item, dict) else item.get("total_priority_score", 0)
+                    "id": post_item.get("id"),
+                    "summary": post_item.get("summary", "（要約なし）"),
+                    "post_text": post_item.get("post_text", ""),
+                    "matched_area": post_item.get("matched_area", ""),
+                    "ward": post_item.get("ward", ""),
+                    "likes": post_item.get("likes_count", 0),
+                    "topic_key": post_item.get("platform", "X"),
+                    "collected_at": post_item.get("collected_at"),
+                    "sentiment_score": post_item.get("sentiment_score", 0.0),
+                    "priority_score": post_item.get("priority_score", 0)
                 })
                 
         history_id = str(uuid.uuid4())[:16]
@@ -349,8 +351,15 @@ def search_issues(q: str = Query(..., description="検索キーワード")):
             print(f"History save error: {insert_err}")
             
         return {"query": q, "history_id": history_id, "posts": posts}
+        
     except Exception as e:
+        # 💥 ここで必ずターミナルに詳細なエラーを表示・出力する
+        import traceback
+        print("========== 検索APIエラー発生 ==========")
+        traceback.print_exc()
+        print("========================================")
         raise HTTPException(status_code=500, detail=str(e))
+    
 
 @app.post("/api/posts")
 def create_post(post: PostCreate):
