@@ -2,48 +2,48 @@ import os
 import time
 import requests
 from datetime import datetime, timezone
-from typing import List, Dict, Tuple, Optional
+from typing import List, Tuple, Optional
 from database import get_supabase_client
 from dotenv import load_dotenv
 import pandas as pd
-import re
 
 load_dotenv()  
 
 X_API_BEARER_TOKEN = os.environ.get("X_API_BEARER_TOKEN")
 SEARCH_ENDPOINT = "https://api.twitter.com/2/tweets/search/all"
 
-class XPostCollector:
+class KobeMultiCSVAnalyzer:
     def __init__(
         self, 
         kobe_csv: str = "kobe.csv", 
         stations_csv: str = "kobe_stations.csv", 
         sentiment_csv: str = "kobe_sentiment_keywords.csv",
-        exclude_csv: str = "exclude_keywords.csv"
+        master_csv: str = "kobe_keywords_master.csv",
+        life_csv: str = "kobe_life_keywords.csv",
+        youth_csv: str = "kobe_youth_sentiment_keywords.csv"
     ):
         self.headers = {
             "Authorization": f"Bearer {X_API_BEARER_TOKEN}"
         }
         self.supabase = get_supabase_client()
         
-        # 1. 各CSVからリストをロード
+        # --- 各種CSVからデータを完全ロード ---
         self.cities = self._load_csv_column(kobe_csv, 'city')
         self.towns = self._load_csv_column(kobe_csv, 'town')
-        self.stations = self._load_csv_column(stations_csv, 'station_name')
+        self.stations = self._load_stations_csv(stations_csv) # ヘッダーなし駅名用ローダー
         
-        # 除外キーワードCSVのロード
-        self.exclude_keywords = self._load_exclude_keywords(exclude_csv)
-        
-        # ポジティブは除外し、ネガティブ（不満・課題）ワードだけに特化
+        # 感情・ネガティブ系キーワード
         _, self.negative_keywords = self._load_sentiments(sentiment_csv)
         
-        # 追加の不満・行政要望ワード
-        self.complaint_suffixes = ["不満", "改善", "どうにかして", "ひどい", "困る", "危険", "汚い", "遅い", "高い", "対応して", "何とかして"]
+        # 追加の専門・ライフ・若者向けCSVのロード
+        self.master_keywords = self._load_general_csv(master_csv)
+        self.life_keywords = self._load_general_csv(life_csv)
+        self.youth_keywords = self._load_general_csv(youth_csv)
 
-        self.state_dir = "collection_states"
-        os.makedirs(self.state_dir, exist_ok=True)
-
-        print(f"📌 ロード完了 -> 行政区:{len(self.cities)}件 / 町名: {len(self.towns)}件 / 駅名: {len(self.stations)}件 / ネガティブワード: {len(self.negative_keywords)}件 / 除外ワード: {len(self.exclude_keywords)}件")
+        print(f"📌 CSVロード完了:")
+        print(f"  - 行政区: {len(self.cities)}件 / 町名: {len(self.towns)}件 / 駅名: {len(self.stations)}件")
+        print(f"  - ネガティブ: {len(self.negative_keywords)}件 / マスター: {len(self.master_keywords)}件")
+        print(f"  - ライフ関連: {len(self.life_keywords)}件 / 若者向け: {len(self.youth_keywords)}件")
 
     def _load_csv_column(self, path: str, col_name: str) -> List[str]:
         items = []
@@ -55,184 +55,208 @@ class XPostCollector:
                     if val and val != "nan" and "以下に掲載がない場合" not in val:
                         if val not in ["神戸", "神戸市"] and val not in items:
                             items.append(val)
-        except FileNotFoundError:
-            print(f"⚠️ 警告: {path} が見つかりません。")
+        except Exception:
+            pass
         return items
 
-    def _load_exclude_keywords(self, path: str) -> List[str]:
-        """ exclude_keywords.csv から除外ワードを取得 """
-        keywords = []
+    def _load_stations_csv(self, path: str) -> List[str]:
+        """ヘッダーのない駅名CSVを安全に読み込む"""
+        items = []
         try:
-            df = pd.read_csv(path)
-            if 'keyword' in df.columns:
-                for val in df['keyword'].dropna():
-                    kw = str(val).strip()
-                    if kw and kw != "nan":
-                        keywords.append(kw)
-        except FileNotFoundError:
-            print(f"⚠️ 警告: 除外キーワードファイル ({path}) が見つかりません。スキップします。")
-        return keywords
+            df = pd.read_csv(path, header=None)
+            target_col = df.columns[0]
+            for _, row in df.iterrows():
+                val = str(row.get(target_col, '')).strip()
+                if val and val != "nan" and val not in items:
+                    items.append(val)
+        except Exception:
+            pass
+        return items
 
     def _load_sentiments(self, path: str) -> Tuple[List[str], List[str]]:
         pos, neg = [], []
         try:
             df = pd.read_csv(path)
-            if 'positive_keyword' in df.columns:
-                pos = [str(x).strip() for x in df['positive_keyword'].dropna() if str(x).strip() != "nan"]
             if 'negative_keyword' in df.columns:
                 neg = [str(x).strip() for x in df['negative_keyword'].dropna() if str(x).strip() != "nan"]
-        except FileNotFoundError:
+        except Exception:
             pass
         return pos, neg
 
-    def _get_one_item_with_rollover(self, items: List[str], state_name: str) -> Tuple[str, bool]:
-        if not items:
-            return "", True
-            
-        state_path = os.path.join(self.state_dir, f"{state_name}_index.txt")
-        current_idx = 0
-        
-        if os.path.exists(state_path):
-            try:
-                with open(state_path, "r") as f:
-                    current_idx = int(f.read().strip())
-            except ValueError:
-                current_idx = 0
-        
-        total_len = len(items)
-        if current_idx >= total_len:
-            return items[-1], True  
-            
-        item = items[current_idx]
-        next_idx = current_idx + 1
-        is_finished = (next_idx >= total_len)
-        
-        with open(state_path, "w") as f:
-            f.write(str(next_idx))
-            
-        return item, is_finished
-
-    def fetch_posts_by_keyword(self, max_results: int = 10) -> bool:
-        city, cities_finished = self._get_one_item_with_rollover(self.cities, "cities")
-        station, stations_finished = self._get_one_item_with_rollover(self.stations, "stations")
-        neg_keyword, neg_finished = self._get_one_item_with_rollover(self.negative_keywords, "negative_sentiments")
-
-        area_targets = []
-        if city: area_targets.append(f'"{city}"')
-        if station: area_targets.append(f'"{station}"')
-        
-        area_query = " OR ".join(area_targets) if area_targets else '"神戸市"'
-        
-        sentiment_list = []
-        if neg_keyword: sentiment_list.append(f'"{neg_keyword}"')
-        for suffix in ["不満", "改善", "困る", "ひどい", "どうにかして"]:
-            sentiment_list.append(f'"{suffix}"')
-            
-        sentiment_query = " OR ".join(set(sentiment_list))
-
-        exclusions = [
-            "-is:retweet", "-PR", "-広告", "-宣伝", "-求人",
-            "-AV", "-アダルト", "-風俗", "-株", "-FX", "-投資",
-            "-has:links", "-ニュース", "-速報", "-天気予報"
-        ]
-        
-        query = f'(神戸市 OR ({area_query})) ({sentiment_query}) {" ".join(exclusions)} lang:ja'
-        
-        print(f"\n🔍 検索ターゲット [行政: {city} / 駅: {station} / ネガティブ: {neg_keyword}]")
-        print(f"🚀 精度向上クエリ: {query}")
-
-        params = {
-            "query": query,
-            "max_results": max_results,
-            "tweet.fields": "created_at,public_metrics,author_id",
-            "user.fields": "public_metrics",
-            "expansions": "author_id"
-        }
-        
+    def _load_general_csv(self, path: str) -> List[str]:
+        items = []
         try:
-            response = requests.get(SEARCH_ENDPOINT, headers=self.headers, params=params)
-            
-            if response.status_code == 429:
-                print("⚠️ API Error: レート制限に達しました。15分待機します...")
-                time.sleep(900)
-                return False
-            elif response.status_code != 200:
-                print(f"❌ X API Error: {response.status_code}\n{response.text}")
-                return stations_finished and cities_finished
-
-            data = response.json()
-            tweets = data.get("data", [])
-            print(f"📥 取得した生のツイート数: {len(tweets)}件")
-
-            saved_count = 0
-            for tweet in tweets:
-                text = tweet.get("text", "")
+            df = pd.read_csv(path)
+            target_col = None
+            for col in df.columns:
+                if any(k in col.lower() for k in ['keyword', 'name', 'text', 'word', 'term']):
+                    target_col = col
+                    break
+            if not target_col and len(df.columns) > 0:
+                target_col = df.columns[0]
                 
-                # ----------------------------------------------------
-                # 🛑 【事前除外フィルタ】 exclude_keywords.csv のチェック
-                # ----------------------------------------------------
-                if any(bad_word in text for bad_word in self.exclude_keywords):
-                    # スパム・広告・求人・グルメ等のノイズ投稿は保存せずスキップ
-                    continue
+            if target_col:
+                for val in df[target_col].dropna():
+                    s = str(val).strip()
+                    if s and s != "nan" and s not in items:
+                        items.append(s)
+        except Exception:
+            pass
+        return items
 
-                # 1. 短すぎるもの、改行が多すぎるものを除外
-                clean_text = re.sub(r'https?://\S+|#\w+', '', text).strip()
-                if len(clean_text) < 10 or text.count("\n") > 4:
-                    continue
-                
-                # 2. 不満文脈キーワードの再チェック
-                complaint_words = ["不満", "改善", "行政", "市役所", "市長", "税金", "バス", "道路", "公園", "ゴミ", "騒音", "危険", "困", "ひど", "対応"]
-                has_complaint_context = any(word in text for word in complaint_words)
-                
-                if not has_complaint_context:
-                    continue
+    def _save_tweets_to_supabase(self, tweets: List[dict]) -> int:
+        """取得したツイートを重複チェックしながらSupabaseに保存する"""
+        saved_count = 0
+        for tweet in tweets:
+            metrics = tweet.get("public_metrics", {})
+            post_data = {
+                "platform": "X",
+                "original_post_id": str(tweet.get("id")),
+                "post_text": tweet.get("text"),
+                "likes": metrics.get("like", 0),
+                "posted_at": tweet.get("created_at"),
+                "collected_at": datetime.now(timezone.utc).isoformat(),
+            }
+            try:
+                existing = self.supabase.table("sns_posts").select("id").eq("original_post_id", post_data["original_post_id"]).execute()
+                if not existing.data:
+                    self.supabase.table("sns_posts").insert(post_data).execute()
+                    saved_count += 1
+            except Exception as db_e:
+                print(f"❌ DB Error: {db_e}")
+        return saved_count
 
-                metrics = tweet.get("public_metrics", {})
-                post_data = {
-                    "platform": "X",
-                    "original_post_id": str(tweet.get("id")),
-                    "post_text": text,
-                    "likes_count": metrics.get("like_count", 0),
-                    "replies_count": metrics.get("reply_count", 0),
-                    "posted_at": tweet.get("created_at"),
-                    "collected_at": datetime.now(timezone.utc).isoformat(),
-                }
-                
-                try:
-                    existing = self.supabase.table("sns_posts").select("id").eq("original_post_id", post_data["original_post_id"]).execute()
-                    if not existing.data:
-                        self.supabase.table("sns_posts").insert(post_data).execute()
-                        saved_count += 1
-                except Exception as db_e:
-                    print(f"❌ DB Error: {db_e}")
-
-            print(f"📊 フィルタリング後の新規保存件数: {saved_count} 件")
-            return stations_finished and cities_finished and neg_finished
-
-        except Exception as e:
-            print(f"💥 通信エラー: {e}")
-            return False
-
-    def run_scan_with_tags(self, tags: Optional[List[str]] = None, mode: str = "or"):
-        print("=== 精度を高めた神戸市不満投稿のフルスキャンを開始 ===")
+    def fetch_and_analyze_or_target(self, target_total: int = 1000):
+        print(f"\n=== 【OR分析】目標 {target_total} 件のデータ収集を開始 ===")
         
-        loop_count = 0
-        max_safety_loops = max(len(self.stations), len(self.cities), len(self.negative_keywords)) * 2 + 50
+        # 地域（行政区 ＋ 駅名）の結合
+        area_pool = self.cities[:10] + self.stations[:10]
+        area_query = " OR ".join([f'"{a}"' for a in area_pool]) if area_pool else '"神戸市"'
+        
+        # 不満・ライフ・若者キーワードの結合
+        sentiment_pool = list(set(self.negative_keywords + self.life_keywords + self.youth_keywords))
+        sentiment_query = " OR ".join([f'"{s}"' for s in sentiment_pool[:15]]) if sentiment_pool else '"不満"'
+        
+        query = f'(神戸市 OR {area_query}) ({sentiment_query}) -is:retweet lang:ja'
+        print(f"🔍 ORクエリ: {query}")
 
-        while loop_count < max_safety_loops:
-            loop_count += 1
-            print(f"\n--- スキャンステップ: {loop_count} / 最大 {max_safety_loops} ---")
+        total_fetched = 0
+        next_token = None
+        
+        while total_fetched < target_total:
+            # 1回のリクエストで取得する上限（Search All APIの最大は通常100）
+            fetch_limit = min(100, target_total - total_fetched)
             
-            is_finished = self.fetch_posts_by_keyword(max_results=10)
+            params = {
+                "query": query,
+                "max_results": fetch_limit,
+                "tweet.fields": "created_at,public_metrics,author_id",
+            }
+            if next_token:
+                params["next_token"] = next_token
             
-            if is_finished:
-                print("🎉 すべてのマスターデータの最後までスキャンし切りました！")
+            try:
+                response = requests.get(SEARCH_ENDPOINT, headers=self.headers, params=params)
+                if response.status_code == 429:
+                    print("⚠️ レート制限に達しました。15分間待機します...")
+                    time.sleep(900)
+                    continue
+                elif response.status_code != 200:
+                    print(f"❌ X API Error: {response.status_code}\n{response.text}")
+                    break
+                
+                data = response.json()
+                tweets = data.get("data", [])
+                
+                if not tweets:
+                    print("ℹ️ これ以上取得できる新しいツイートがありません。")
+                    break
+                
+                saved = self._save_tweets_to_supabase(tweets)
+                total_fetched += len(tweets)
+                print(f"📥 累計取得件数: {total_fetched}件 (今回新規保存: {saved}件)")
+                
+                # 次のページのトークンを取得
+                next_token = data.get("meta", {}).get("next_token")
+                if not next_token:
+                    print("ℹ️ ページネーションの終端に達しました。")
+                    break
+                
+                time.sleep(1) # API負荷軽減のウェイト
+                
+            except Exception as e:
+                print(f"💥 通信エラー: {e}")
                 break
                 
-            time.sleep(2)
+        print(f"🎉 OR分析による収集が完了しました。合計取得数: {total_fetched}件")
 
-        print("=== 全自動スキャンが完了しました ===")
+    def fetch_and_analyze_and_target(self, target_total: int = 1000):
+        print(f"\n=== 【AND分析】目標 {target_total} 件の厳選データ収集を開始 ===")
+        
+        city = self.cities[0] if self.cities else "神戸市"
+        station = self.stations[0] if self.stations else "三宮"
+        neg = self.negative_keywords[0] if self.negative_keywords else "不満"
+        
+        query = f'"{city}" "{station}" "{neg}" -is:retweet lang:ja'
+        print(f"🔍 ANDクエリ: {query}")
 
+        total_fetched = 0
+        next_token = None
+        
+        while total_fetched < target_total:
+            fetch_limit = min(100, target_total - total_fetched)
+            
+            params = {
+                "query": query,
+                "max_results": fetch_limit,
+                "tweet.fields": "created_at,public_metrics,author_id",
+            }
+            if next_token:
+                params["next_token"] = next_token
+            
+            try:
+                response = requests.get(SEARCH_ENDPOINT, headers=self.headers, params=params)
+                if response.status_code == 429:
+                    print("⚠️ レート制限に達しました。15分間待機します...")
+                    time.sleep(900)
+                    continue
+                elif response.status_code != 200:
+                    print(f"❌ X API Error: {response.status_code}\n{response.text}")
+                    break
+                
+                data = response.json()
+                tweets = data.get("data", [])
+                
+                if not tweets:
+                    print("ℹ️ これ以上取得できる新しいツイートがありません。")
+                    break
+                
+                saved = self._save_tweets_to_supabase(tweets)
+                total_fetched += len(tweets)
+                print(f"📥 AND累計取得件数: {total_fetched}件 (今回新規保存: {saved}件)")
+                
+                next_token = data.get("meta", {}).get("next_token")
+                if not next_token:
+                    print("ℹ️ ページネーションの終端に達しました。")
+                    break
+                
+                time.sleep(1)
+                
+            except Exception as e:
+                print(f"💥 通信エラー: {e}")
+                break
+                
+        print(f"🎉 AND分析による収集が完了しました。合計取得数: {total_fetched}件")
+    
+    def run_scan_with_tags(self, tags: Optional[List[str]] = None, mode: str = "or"):
+        """main.py からの呼び出しを受け付けるラッパーメソッド（1000件目標）"""
+        print(f"=== 【x.py 連携】タグ収集開始 (モード: {mode.upper()}, タグ: {tags}) ===")
+        if mode.lower() == "and":
+            self.fetch_and_analyze_and_target(target_total=1000)
+        else:
+            self.fetch_and_analyze_or_target(target_total=1000)
+    
 if __name__ == "__main__":
-    collector = XPostCollector()
-    collector.run_scan_with_tags()
+    analyzer = KobeMultiCSVAnalyzer()
+    # 1000件収集を実行する場合
+    analyzer.fetch_and_analyze_or_target(target_total=1000)

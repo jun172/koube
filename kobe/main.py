@@ -38,7 +38,7 @@ app.add_middleware(
 )
 # 各種クライアントの初期化
 supabase: Client = get_supabase_client()
-x_client = XPostCollector()  
+x_client = KobeMultiCSVAnalyzer()  
 RESEND_FROM = os.environ.get("RESEND_FROM_EMAIL", "onboarding@resend.dev")
 
 class IssueCatalogCreate(BaseModel):
@@ -77,7 +77,10 @@ class TagFetchRequest(BaseModel):
 class CollectionRequest(BaseModel):
     tags: List[str] = []
     mode: str = "or"  # "or" または "and"
-    
+
+class AgentRequest(BaseModel):
+    query: str
+
 # --- 静的ファイル・フロントエンド配信設定 ---
 os.makedirs("static", exist_ok=True)
 app.mount("/static", StaticFiles(directory="static"), name="static")
@@ -313,7 +316,6 @@ def serve_reset2():
     return FileResponse("static/reset2.html")
 
 # --- キーワード検索 & Web表示用API ---
-# --- キーワード検索 & Web表示用API ---
 @app.get("/api/search")
 def search_issues(q: str = Query(..., description="検索キーワード")):
     try:
@@ -382,15 +384,16 @@ def get_posts():
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# AI解析の一括実行API
+# main.py の既存のエンドポイントはそのまま利用可能
 @app.post("/api/run-ai-analysis")
 def run_ai_analysis_for_all_posts(background_tasks: BackgroundTasks):
     def task():
         ai_engine = get_ai_engine()
-        ai_engine.analyze_posts_from_db()
+        ai_engine.analyze_posts_from_db() # 中身が OpenAI Agents SDK に切り替わる！
 
     background_tasks.add_task(task)
-    return {"message": "sns_posts からのAI一括解析処理をバックグラウンドで開始しました。"}
+    return {"message": "OpenAI Agents SDK によるSNS一括解析処理をバックグラウンドで開始しました。"}
+
 
 @app.get("/api/history/{history_id}")
 def get_history_detail(history_id: str, sentiment: str = "all"):
@@ -451,6 +454,24 @@ def get_keywords():
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/agent/run")
+def run_ai_agent(req: AgentRequest):
+    try:
+        # ai.py のエンジン経由でエージェント処理を呼び出す
+        ai_engine = get_ai_engine()
+        
+        # ai.py 側にエージェント実行用のメソッド（例: run_agent）がある場合の処理
+        if hasattr(ai_engine, "run_agent"):
+            result = ai_engine.run_agent(req.query)
+        else:
+            result = {"message": "ai.py にエージェント実行メソッドが定義されていません", "query": req.query}
+            
+        return {"status": "success", "data": result}
+    except Exception as e:
+        print(f"Agent execution error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8080))

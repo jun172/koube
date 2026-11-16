@@ -2,15 +2,12 @@ import os
 from supabase import create_client, Client
 from dotenv import load_dotenv
 from typing import Dict, List, Union, Any
-from google.cloud import language_v1  # Natural Language API用
-from google import genai              # Gemini API用（新しい Google Gen AI SDK）
 
 # .env ファイルから環境変数を読み込む
 load_dotenv()
 
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY") # または GOOGLE_API_KEY
 SUPABASE_SERVICE_ROLE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
 
 if not SUPABASE_URL or not SUPABASE_KEY:
@@ -27,100 +24,20 @@ _supabase_admin_client: Client = create_client(
 def get_supabase_client() -> Client:
     """通常用のSupabaseクライアントを返却する"""
     return _supabase_client
-# --- Google Cloud Natural Language API による解析関数 ---
+
 def get_supabase_admin_client() -> Client:
     """管理者権限（service_role）を持つSupabaseクライアントを返却する"""
     return _supabase_admin_client
 
-def analyze_text_with_natural_language(text: str) -> Dict[str, Any]:
-    """
-    Google Cloud Natural Language API を使用して、
-    テキストの感情分析（スコア）とエンティティ（重要キーワード）抽出を行う
-    """
-    client = language_v1.LanguageServiceClient()
 
-    document = language_v1.Document(
-        content=text,
-        type_=language_v1.Document.Type.PLAIN_TEXT,
-        language="ja",  # 日本語を指定
-    )
-
-    # 1. 感情分析の実行
-    sentiment_response = client.analyze_sentiment(request={"document": document})
-    sentiment = sentiment_response.document_sentiment
-
-    # 2. エンティティ分析（キーワード抽出）の実行
-    entities_response = client.analyze_entities(request={"document": document})
-    
-    extracted_entities = []
-    for entity in entities_response.entities:
-        extracted_entities.append({
-            "name": entity.name,
-            "type": language_v1.Entity.Type(entity.type_).name,
-            "salience": entity.salience, # 重要度 (0.0 ~ 1.0)
-        })
-
-    return {
-        "score": sentiment.score,          # -1.0 (ネガティブ) 〜 1.0 (ポジティブ)
-        "magnitude": sentiment.magnitude,  # 感情の強さ
-        "entities": extracted_entities     # 抽出されたキーワード一覧
-    }
-
-
-# --- Gemini API による要約・タイトル生成関数 ---
-
-def generate_summary_and_title_with_gemini(text: str) -> Dict[str, str]:
-    """
-    Gemini API を使用して、投稿文から「タイトル」と「要約」を生成する
-    """
-    # クライアントの初期化（環境変数の GOOGLE_API_KEY または GEMINI_API_KEY を自動読込）
-    client = genai.Client()
-
-    prompt = f"""
-以下のSNS投稿・フィードバック文から、内容を端的に表す「タイトル」と、2〜3文程度の「要約」を作成してください。
-出力は必ず以下のJSON形式（マークダウンのコードブロックなし）で返してください。
-{{
-  "title": "ここにタイトル",
-  "summary": "ここに要約文"
-}}
-
-対象のテキスト：
-{text}
-"""
-
-    try:
-        response = client.models.generate_content(
-            model="gemini-2.5-flash",  # 用途に応じたモデルを指定
-            contents=prompt,
-        )
-        
-        import json
-        # レスポンスからJSON部分をパース（必要に応じてクリーニング）
-        # レスポンスからJSON部分をパース（None対策を追加）
-        
-        raw_text = response.text if response.text else "{}"
-        cleaned_text = raw_text.strip().replace("```json", "").replace("```", "").strip()
-        result_json = json.loads(cleaned_text)
-        
-        return {
-            "title": result_json.get("title", "無題の投稿"),
-            "summary": result_json.get("summary", text[:100] + "...")
-        }
-    except Exception as e:
-        print(f"Error generating summary with Gemini: {e}")
-        return {
-            "title": "要約生成エラー",
-            "summary": text[:100] + "..."
-        }
-
-
-# --- 各テーブルへのデータ操作（CRUD + AI解析・Gemini連携） ---
+# --- 各テーブルへのデータ操作（CRUD 関数群） ---
 
 def upsert_chat_history(history_id: str, query: str, results: Union[List[Any], Dict[str, Any]]):
     """
-    1. chat_histories テーブルへ検索・分析履歴を保存・更新する
+    1. chat_histories テーブルへ検索・分析履歴を管理者権限で保存・更新する
     """
-    client = get_supabase_client()
+    # 通常クライアントではなく管理者クライアントを使用する
+    client = get_supabase_admin_client()
     try:
         response = client.table("chat_histories").upsert({
             "id": history_id,
@@ -129,52 +46,12 @@ def upsert_chat_history(history_id: str, query: str, results: Union[List[Any], D
         }, on_conflict="id").execute()
         return response
     except Exception as e:
-        print(f"Error upserting chat_history: {e}")
-        return None
-
-def insert_sns_post_with_ai_analysis(post_data: dict, text_field_name: str = "content"):
-    """
-    2. sns_posts テーブルへの保存と同時に、Gemini（要約・タイトル）と Natural Language（感情・キーワード）を両方実行して保存する例
-    """
-    client = get_supabase_client()
-    try:
-        post_text = post_data.get(text_field_name)
-        
-        # 1. Geminiでタイトルと要約を生成して post_data に追加
-        if post_text:
-            gemini_result = generate_summary_and_title_with_gemini(post_text)
-            post_data["title"] = gemini_result["title"]
-            post_data["summary"] = gemini_result["summary"]
-
-        # 2. SNS投稿データを保存（タイトルや要約カラムがある場合も一緒に保存）
-        response = client.table("sns_posts").upsert(
-            post_data, 
-            on_conflict="original_post_id"
-        ).execute()
-
-        # 3. Natural Language APIで感情・キーワード解析を実行
-        if post_text:
-            nl_analysis = analyze_text_with_natural_language(post_text)
-            
-            analysis_payload = {
-                "sns_post_id": post_data.get("id"),
-                "sentiment_score": nl_analysis["score"],
-                "sentiment_magnitude": nl_analysis["magnitude"],
-                "entities": nl_analysis["entities"]
-            }
-            client.table("ai_analysis_results").upsert(
-                analysis_payload,
-                on_conflict="sns_post_id"
-            ).execute()
-
-        return response
-    except Exception as e:
-        print(f"Error inserting sns_post with AI analysis: {e}")
+        print(f"History save error: {e}")
         return None
 
 def insert_sns_post(post_data: dict):
     """
-    sns_posts テーブルへデータを単体で挿入・更新する
+    2. sns_posts テーブルへデータを単体で挿入・更新する
     """
     client = get_supabase_client()
     try:
@@ -204,9 +81,10 @@ def upsert_issue_catalog(catalog_data: dict):
 
 def insert_ai_analysis(analysis_data: dict):
     """
-    4. ai_analysis_results テーブルへAI解析結果を挿入・更新する
+    4. ai_analysis_results テーブルへAI解析結果を管理者権限で挿入・更新する
     """
-    client = get_supabase_client()
+    # 通常クライアント(client)の代わりに管理者クライアント(admin_client)を使用
+    client = get_supabase_admin_client()
     try:
         response = client.table("ai_analysis_results").upsert(
             analysis_data,
