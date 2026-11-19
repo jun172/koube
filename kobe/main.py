@@ -388,11 +388,12 @@ def get_posts():
 @app.post("/api/run-ai-analysis")
 def run_ai_analysis_for_all_posts(background_tasks: BackgroundTasks):
     def task():
-        ai_engine = get_ai_engine()
-        ai_engine.analyze_posts_from_db() # 中身が OpenAI Agents SDK に切り替わる！
+        # IntegratedAnalysisEngine クラスを直接インスタンス化して解析を実行
+        ai_engine = IntegratedAnalysisEngine()
+        ai_engine.analyze_and_classify_posts(limit=50) # または対応するメソッド名
 
     background_tasks.add_task(task)
-    return {"message": "OpenAI Agents SDK によるSNS一括解析処理をバックグラウンドで開始しました。"}
+    return {"message": "AI一括解析処理をバックグラウンドで開始しました。"}
 
 
 @app.get("/api/history/{history_id}")
@@ -454,24 +455,6 @@ def get_keywords():
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
-@app.post("/api/agent/run")
-def run_ai_agent(req: AgentRequest):
-    try:
-        # ai.py のエンジン経由でエージェント処理を呼び出す
-        ai_engine = get_ai_engine()
-        
-        # ai.py 側にエージェント実行用のメソッド（例: run_agent）がある場合の処理
-        if hasattr(ai_engine, "run_agent"):
-            result = ai_engine.run_agent(req.query)
-        else:
-            result = {"message": "ai.py にエージェント実行メソッドが定義されていません", "query": req.query}
-            
-        return {"status": "success", "data": result}
-    except Exception as e:
-        print(f"Agent execution error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8080))

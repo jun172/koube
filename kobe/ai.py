@@ -93,7 +93,7 @@ class IntegratedAnalysisEngine:
 
             # Gemini API 呼び出し（JSON出力を強制）
             response_gemini = genai_client.models.generate_content(
-                model='gemini-3.8-flash',
+                model='gemini-3.8-flash',  # 必要に応じてモデル名を調整
                 contents=f"以下の入力テキスト（JSON形式）を分析し、指定のJSON配列形式で出力してください。\n\n# 入力テキスト\n{input_text_json}",
                 config=types.GenerateContentConfig(
                     system_instruction=SYSTEM_PROMPT,
@@ -102,7 +102,6 @@ class IntegratedAnalysisEngine:
                 ),
             )
             
-            # 105行目付近: textがNoneでないことを確実に保証する
             response_text = response_gemini.text if response_gemini.text else "{}"
             gemini_results = json.loads(response_text)
             gemini_map = {item.get("id"): item for item in gemini_results}
@@ -111,7 +110,6 @@ class IntegratedAnalysisEngine:
 
             # 3. 各投稿ごとに Google Cloud NL API 感情分析 ＆ ML優先度計算 ＆ データベース保存
             for post in posts:
-                # postがNoneまたはdictでない場合はスキップ
                 if not isinstance(post, dict):
                     continue
 
@@ -120,10 +118,9 @@ class IntegratedAnalysisEngine:
                     break
 
                 post_id_raw = post.get("id")
-# post_idが辞書やオブジェクトではなく、確実にintかstrとして扱うための処理
                 post_id = int(post_id_raw) if isinstance(post_id_raw, (int, str)) and str(post_id_raw).isdigit() else str(post_id_raw)
                 text = str(post.get("post_text") or "")
-                # Gemini側の分類結果を取得
+                
                 gemini_info = gemini_map.get(post_id, {})
                 is_valid = gemini_info.get("is_valid", True)
                 category = gemini_info.get("category", "その他")
@@ -136,9 +133,10 @@ class IntegratedAnalysisEngine:
                 likes = int(str(raw_likes)) if raw_likes is not None else 0
                 raw_replies = post.get("replies_count", 0)
                 replies = int(str(raw_replies)) if raw_replies is not None else 0
+                
                 # --- Google Cloud Natural Language API による感情分析 ---
                 document = language_v1.Document(
-                    content= text, 
+                    content=text, 
                     type_=language_v1.Document.Type.PLAIN_TEXT
                 )
                 sentiment_response = nl_client.analyze_sentiment(request={"document": document})
@@ -181,12 +179,14 @@ class IntegratedAnalysisEngine:
                 prefix_label = "[行政課題・不満]" if is_complaint else "[一般話題]"
                 post_summary = f"{prefix_label} {text[:20]}... (カテゴリ:{category})"
                 
+                # ▼ ここに "post_text": text を追加して NOT NULL 制約エラーを解消 ▼
                 catalog_data = {
-                    "main_category": category,  # Geminiが分類したカテゴリを反映
+                    "main_category": category,
                     "sub_category": "感情スコア: " + f"{cloud_sentiment_score:.2f}",
                     "detail_category": f"優先度: {final_priority}",
                     "ai_summary": post_summary,
-                    "total_priority_score": final_priority
+                    "total_priority_score": final_priority,
+                    "post_text": text  # ← 追加
                 }
                 
                 catalog_res = upsert_issue_catalog(catalog_data)

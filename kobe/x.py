@@ -7,40 +7,42 @@ from database import get_supabase_client
 from dotenv import load_dotenv
 import pandas as pd
 
-load_dotenv()  
+load_dotenv()
 
 X_API_BEARER_TOKEN = os.environ.get("X_API_BEARER_TOKEN")
 SEARCH_ENDPOINT = "https://api.twitter.com/2/tweets/search/all"
+TWEET_FIELDS = "created_at,public_metrics,author_id,note_tweet"
+
 
 class KobeMultiCSVAnalyzer:
     def __init__(
-        self, 
-        kobe_csv: str = "kobe.csv", 
-        stations_csv: str = "kobe_stations.csv", 
+        self,
+        kobe_csv: str = "kobe.csv",
+        stations_csv: str = "kobe_stations.csv",
         sentiment_csv: str = "kobe_sentiment_keywords.csv",
         master_csv: str = "kobe_keywords_master.csv",
         life_csv: str = "kobe_life_keywords.csv",
-        youth_csv: str = "kobe_youth_sentiment_keywords.csv"
+        youth_csv: str = "kobe_youth_sentiment_keywords.csv",
     ):
         self.headers = {
             "Authorization": f"Bearer {X_API_BEARER_TOKEN}"
         }
         self.supabase = get_supabase_client()
-        
+
         # --- 各種CSVからデータを完全ロード ---
-        self.cities = self._load_csv_column(kobe_csv, 'city')
-        self.towns = self._load_csv_column(kobe_csv, 'town')
-        self.stations = self._load_stations_csv(stations_csv) # ヘッダーなし駅名用ローダー
-        
+        self.cities = self._load_csv_column(kobe_csv, "city")
+        self.towns = self._load_csv_column(kobe_csv, "town")
+        self.stations = self._load_stations_csv(stations_csv)  # ヘッダーなし駅名用ローダー
+
         # 感情・ネガティブ系キーワード
         _, self.negative_keywords = self._load_sentiments(sentiment_csv)
-        
+
         # 追加の専門・ライフ・若者向けCSVのロード
         self.master_keywords = self._load_general_csv(master_csv)
         self.life_keywords = self._load_general_csv(life_csv)
         self.youth_keywords = self._load_general_csv(youth_csv)
 
-        print(f"📌 CSVロード完了:")
+        print("📌 CSVロード完了:")
         print(f"  - 行政区: {len(self.cities)}件 / 町名: {len(self.towns)}件 / 駅名: {len(self.stations)}件")
         print(f"  - ネガティブ: {len(self.negative_keywords)}件 / マスター: {len(self.master_keywords)}件")
         print(f"  - ライフ関連: {len(self.life_keywords)}件 / 若者向け: {len(self.youth_keywords)}件")
@@ -51,7 +53,7 @@ class KobeMultiCSVAnalyzer:
             df = pd.read_csv(path)
             if col_name in df.columns:
                 for _, row in df.iterrows():
-                    val = str(row.get(col_name, '')).strip()
+                    val = str(row.get(col_name, "")).strip()
                     if val and val != "nan" and "以下に掲載がない場合" not in val:
                         if val not in ["神戸", "神戸市"] and val not in items:
                             items.append(val)
@@ -66,8 +68,8 @@ class KobeMultiCSVAnalyzer:
             df = pd.read_csv(path, header=None)
             target_col = df.columns[0]
             for _, row in df.iterrows():
-                val = str(row.get(target_col, '')).strip()
-                if val and val != "nan" and val not in items:
+                val = str(row.get(target_col, "")).strip()
+                if val and val != "nan" and val != "station_name" and val not in items:
                     items.append(val)
         except Exception:
             pass
@@ -77,8 +79,8 @@ class KobeMultiCSVAnalyzer:
         pos, neg = [], []
         try:
             df = pd.read_csv(path)
-            if 'negative_keyword' in df.columns:
-                neg = [str(x).strip() for x in df['negative_keyword'].dropna() if str(x).strip() != "nan"]
+            if "negative_keyword" in df.columns:
+                neg = [str(x).strip() for x in df["negative_keyword"].dropna() if str(x).strip() != "nan"]
         except Exception:
             pass
         return pos, neg
@@ -89,12 +91,12 @@ class KobeMultiCSVAnalyzer:
             df = pd.read_csv(path)
             target_col = None
             for col in df.columns:
-                if any(k in col.lower() for k in ['keyword', 'name', 'text', 'word', 'term']):
+                if any(k in col.lower() for k in ["keyword", "name", "text", "word", "term"]):
                     target_col = col
                     break
             if not target_col and len(df.columns) > 0:
                 target_col = df.columns[0]
-                
+
             if target_col:
                 for val in df[target_col].dropna():
                     s = str(val).strip()
@@ -104,21 +106,39 @@ class KobeMultiCSVAnalyzer:
             pass
         return items
 
+    def _extract_tweet_text(self, tweet: dict) -> str:
+        """長文投稿（note_tweet）があれば全文を優先取得し、なければ通常のtextを返す"""
+        note_tweet = tweet.get("note_tweet")
+        if isinstance(note_tweet, dict) and note_tweet.get("text"):
+            return str(note_tweet["text"])
+        return str(tweet.get("text") or "")
+
     def _save_tweets_to_supabase(self, tweets: List[dict]) -> int:
-        """取得したツイートを重複チェックしながらSupabaseに保存する"""
+        """取得したツイートを重複チェックしながらSupabaseに保存する（URL・長文対応）"""
         saved_count = 0
         for tweet in tweets:
-            metrics = tweet.get("public_metrics", {})
+            metrics = tweet.get("public_metrics") or {}
+            tweet_id = str(tweet.get("id"))
+
+            # ツイートの公式URLを自動生成
+            post_url = f"https://twitter.com/i/web/status/{tweet_id}"
+
             post_data = {
                 "platform": "X",
-                "original_post_id": str(tweet.get("id")),
-                "post_text": tweet.get("text"),
-                "likes": metrics.get("like", 0),
+                "original_post_id": tweet_id,
+                "post_text": self._extract_tweet_text(tweet),
+                "post_url": post_url,
+                "likes": metrics.get("like_count", 0),
                 "posted_at": tweet.get("created_at"),
                 "collected_at": datetime.now(timezone.utc).isoformat(),
             }
             try:
-                existing = self.supabase.table("sns_posts").select("id").eq("original_post_id", post_data["original_post_id"]).execute()
+                existing = (
+                    self.supabase.table("sns_posts")
+                    .select("id")
+                    .eq("original_post_id", post_data["original_post_id"])
+                    .execute()
+                )
                 if not existing.data:
                     self.supabase.table("sns_posts").insert(post_data).execute()
                     saved_count += 1
@@ -126,35 +146,22 @@ class KobeMultiCSVAnalyzer:
                 print(f"❌ DB Error: {db_e}")
         return saved_count
 
-    def fetch_and_analyze_or_target(self, target_total: int = 1000):
-        print(f"\n=== 【OR分析】目標 {target_total} 件のデータ収集を開始 ===")
-        
-        # 地域（行政区 ＋ 駅名）の結合
-        area_pool = self.cities[:10] + self.stations[:10]
-        area_query = " OR ".join([f'"{a}"' for a in area_pool]) if area_pool else '"神戸市"'
-        
-        # 不満・ライフ・若者キーワードの結合
-        sentiment_pool = list(set(self.negative_keywords + self.life_keywords + self.youth_keywords))
-        sentiment_query = " OR ".join([f'"{s}"' for s in sentiment_pool[:15]]) if sentiment_pool else '"不満"'
-        
-        query = f'(神戸市 OR {area_query}) ({sentiment_query}) -is:retweet lang:ja'
-        print(f"🔍 ORクエリ: {query}")
-
+    def _run_search_loop(self, query: str, target_total: int, label: str):
         total_fetched = 0
         next_token = None
-        
+
         while total_fetched < target_total:
             # 1回のリクエストで取得する上限（Search All APIの最大は通常100）
             fetch_limit = min(100, target_total - total_fetched)
-            
+
             params = {
                 "query": query,
                 "max_results": fetch_limit,
-                "tweet.fields": "created_at,public_metrics,author_id",
+                "tweet.fields": TWEET_FIELDS,
             }
             if next_token:
                 params["next_token"] = next_token
-            
+
             try:
                 response = requests.get(SEARCH_ENDPOINT, headers=self.headers, params=params)
                 if response.status_code == 429:
@@ -164,98 +171,78 @@ class KobeMultiCSVAnalyzer:
                 elif response.status_code != 200:
                     print(f"❌ X API Error: {response.status_code}\n{response.text}")
                     break
-                
+
                 data = response.json()
                 tweets = data.get("data", [])
-                
+
                 if not tweets:
                     print("ℹ️ これ以上取得できる新しいツイートがありません。")
                     break
-                
+
                 saved = self._save_tweets_to_supabase(tweets)
                 total_fetched += len(tweets)
-                print(f"📥 累計取得件数: {total_fetched}件 (今回新規保存: {saved}件)")
-                
+                print(f"📥 {label}累計取得件数: {total_fetched}件 (今回新規保存: {saved}件)")
+
                 # 次のページのトークンを取得
                 next_token = data.get("meta", {}).get("next_token")
                 if not next_token:
                     print("ℹ️ ページネーションの終端に達しました。")
                     break
-                
-                time.sleep(1) # API負荷軽減のウェイト
-                
+
+                time.sleep(1)  # API負荷軽減のウェイト
+
             except Exception as e:
                 print(f"💥 通信エラー: {e}")
                 break
-                
-        print(f"🎉 OR分析による収集が完了しました。合計取得数: {total_fetched}件")
 
-    def fetch_and_analyze_and_target(self, target_total: int = 1000):
+        print(f"🎉 {label}による収集が完了しました。合計取得数: {total_fetched}件")
+
+    def fetch_and_analyze_or_target(self, tags: Optional[List[str]] = None, target_total: int = 1000):
+        print(f"\n=== 【OR分析】目標 {target_total} 件のデータ収集を開始 ===")
+
+        clean_tags = [t.strip() for t in (tags or []) if t and t.strip()]
+        if clean_tags:
+            tag_query = " OR ".join([f'"{t}"' for t in clean_tags])
+            query = f"({tag_query}) -is:retweet lang:ja"
+        else:
+            # 地域（行政区 ＋ 駅名）の結合
+            area_pool = self.cities[:10] + self.stations[:10]
+            area_query = " OR ".join([f'"{a}"' for a in area_pool]) if area_pool else '"神戸市"'
+
+            # 不満・ライフ・若者キーワードの結合
+            sentiment_pool = list(set(self.negative_keywords + self.life_keywords + self.youth_keywords))
+            sentiment_query = " OR ".join([f'"{s}"' for s in sentiment_pool[:15]]) if sentiment_pool else '"不満"'
+
+            query = f"(神戸市 OR {area_query}) ({sentiment_query}) -is:retweet lang:ja"
+
+        print(f"🔍 ORクエリ: {query}")
+        self._run_search_loop(query=query, target_total=target_total, label="OR分析")
+
+    def fetch_and_analyze_and_target(self, tags: Optional[List[str]] = None, target_total: int = 1000):
         print(f"\n=== 【AND分析】目標 {target_total} 件の厳選データ収集を開始 ===")
-        
-        city = self.cities[0] if self.cities else "神戸市"
-        station = self.stations[0] if self.stations else "三宮"
-        neg = self.negative_keywords[0] if self.negative_keywords else "不満"
-        
-        query = f'"{city}" "{station}" "{neg}" -is:retweet lang:ja'
-        print(f"🔍 ANDクエリ: {query}")
 
-        total_fetched = 0
-        next_token = None
-        
-        while total_fetched < target_total:
-            fetch_limit = min(100, target_total - total_fetched)
-            
-            params = {
-                "query": query,
-                "max_results": fetch_limit,
-                "tweet.fields": "created_at,public_metrics,author_id",
-            }
-            if next_token:
-                params["next_token"] = next_token
-            
-            try:
-                response = requests.get(SEARCH_ENDPOINT, headers=self.headers, params=params)
-                if response.status_code == 429:
-                    print("⚠️ レート制限に達しました。15分間待機します...")
-                    time.sleep(900)
-                    continue
-                elif response.status_code != 200:
-                    print(f"❌ X API Error: {response.status_code}\n{response.text}")
-                    break
-                
-                data = response.json()
-                tweets = data.get("data", [])
-                
-                if not tweets:
-                    print("ℹ️ これ以上取得できる新しいツイートがありません。")
-                    break
-                
-                saved = self._save_tweets_to_supabase(tweets)
-                total_fetched += len(tweets)
-                print(f"📥 AND累計取得件数: {total_fetched}件 (今回新規保存: {saved}件)")
-                
-                next_token = data.get("meta", {}).get("next_token")
-                if not next_token:
-                    print("ℹ️ ページネーションの終端に達しました。")
-                    break
-                
-                time.sleep(1)
-                
-            except Exception as e:
-                print(f"💥 通信エラー: {e}")
-                break
-                
-        print(f"🎉 AND分析による収集が完了しました。合計取得数: {total_fetched}件")
-    
+        clean_tags = [t.strip() for t in (tags or []) if t and t.strip()]
+        if clean_tags:
+            tag_query = " ".join([f'"{t}"' for t in clean_tags])
+            query = f"{tag_query} -is:retweet lang:ja"
+        else:
+            city = self.cities[0] if self.cities else "神戸市"
+            station = self.stations[0] if self.stations else "三宮"
+            neg = self.negative_keywords[0] if self.negative_keywords else "不満"
+            query = f'"{city}" "{station}" "{neg}" -is:retweet lang:ja'
+
+        print(f"🔍 ANDクエリ: {query}")
+        self._run_search_loop(query=query, target_total=target_total, label="AND分析")
+
     def run_scan_with_tags(self, tags: Optional[List[str]] = None, mode: str = "or"):
         """main.py からの呼び出しを受け付けるラッパーメソッド（1000件目標）"""
         print(f"=== 【x.py 連携】タグ収集開始 (モード: {mode.upper()}, タグ: {tags}) ===")
         if mode.lower() == "and":
-            self.fetch_and_analyze_and_target(target_total=1000)
+            self.fetch_and_analyze_and_target(tags=tags, target_total=1000)
         else:
-            self.fetch_and_analyze_or_target(target_total=1000)
-    
+            self.fetch_and_analyze_or_target(tags=tags, target_total=1000)
+
+
 if __name__ == "__main__":
     analyzer = KobeMultiCSVAnalyzer()
     # 1000件収集を実行する場合
