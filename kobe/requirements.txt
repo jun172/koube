@@ -40,4 +40,3 @@ numpy
 requests
 google-cloud-language
 pydantic
-Traceback
