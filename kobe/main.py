@@ -1,4 +1,5 @@
 import os
+import traceback
 import resend
 from fastapi import FastAPI, BackgroundTasks, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -319,49 +320,80 @@ def serve_reset2():
 @app.get("/api/search")
 def search_issues(q: str = Query(..., description="検索キーワード")):
     try:
-        # sns_posts テーブルからキーワードに一致するものを取得
-        response = supabase.table("sns_posts").select(
-            "id, platform, post_text, likes, collected_at"
-        ).ilike("post_text", f"%{q}%").order("collected_at", desc=True).execute()
-        
+        # issue_catalog テーブルからキーワードに一致するものを取得
+        response = (
+            supabase.table("issue_catalog")
+            .select(
+                "id, platform, post_text, ai_summary, ward, matched_area, "
+                "main_category, likes_count, collected_at, sentiment_score, total_priority_score"
+            )
+            .ilike("post_text", f"%{q}%")
+            .order("collected_at", desc=True)
+            .execute()
+        )
+
+        seen_texts = set()
         posts = []
+
         if response.data and isinstance(response.data, list):
             for item in response.data:
-                post_item = item if isinstance(item, dict) else {}
-                
+                if not isinstance(item, dict):
+                    continue
+
+                # 前後の空白や改行を揃えて重複を判定
+                raw_text = item.get("post_text")
+                text = str(raw_text).strip() if raw_text is not None else ""
+                if not text or text in seen_texts:
+                    continue
+                seen_texts.add(text)
+
+                likes_val = item.get("likes_count")
+                likes_int = int(likes_val) if isinstance(likes_val, (int, float, str)) else 0
+
+                sentiment_val = item.get("sentiment_score")
+                sentiment_float = float(sentiment_val) if isinstance(sentiment_val, (int, float, str)) else 0.0
+
+                priority_val = item.get("total_priority_score")
+                priority_int = int(priority_val) if isinstance(priority_val, (int, float, str)) else 0
+
+                summary_val = item.get("ai_summary")
+                summary_str = str(summary_val).strip() if summary_val else "（要約なし）"
+
+                area_val = item.get("matched_area")
+                ward_val = item.get("ward")
+                cat_val = item.get("main_category")
+                plat_val = item.get("platform")
+
                 posts.append({
-                    "id": post_item.get("id"),
-                    "summary": post_item.get("summary", "（要約なし）"),
-                    "post_text": post_item.get("post_text", ""),
-                    "matched_area": post_item.get("matched_area", ""),
-                    "ward": post_item.get("ward", ""),
-                    "likes": post_item.get("likes_count", 0),
-                    "topic_key": post_item.get("platform", "X"),
-                    "collected_at": post_item.get("collected_at"),
-                    "sentiment_score": post_item.get("sentiment_score", 0.0),
-                    "priority_score": post_item.get("priority_score", 0)
+                    "id": item.get("id"),
+                    "summary": summary_str,
+                    "post_text": text,
+                    "matched_area": str(area_val) if area_val is not None else "",
+                    "ward": str(ward_val) if ward_val is not None else "",
+                    "likes": likes_int,
+                    "topic_key": str(cat_val) if cat_val else (str(plat_val) if plat_val else "X"),
+                    "collected_at": item.get("collected_at"),
+                    "sentiment_score": sentiment_float,
+                    "priority_score": priority_int,
                 })
-                
+
         history_id = str(uuid.uuid4())[:16]
         try:
             supabase.table("chat_histories").insert({
                 "id": history_id,
                 "query": q,
-                "results": {"posts": posts}
+                "results": {"posts": posts},
             }).execute()
         except Exception as insert_err:
             print(f"History save error: {insert_err}")
-            
+
         return {"query": q, "history_id": history_id, "posts": posts}
-        
+
     except Exception as e:
-        # 💥 ここで必ずターミナルに詳細なエラーを表示・出力する
-        import traceback
         print("========== 検索APIエラー発生 ==========")
         traceback.print_exc()
         print("========================================")
         raise HTTPException(status_code=500, detail=str(e))
-    
 
 @app.post("/api/posts")
 def create_post(post: PostCreate):
