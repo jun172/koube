@@ -9,7 +9,7 @@ import pandas as pd
 
 load_dotenv()
 
-X_API_BEARER_TOKEN = os.environ.get("X_API_BEARER_TOKEN")
+X_API_BEARER_TOKEN = (os.environ.get("X_API_BEARER_TOKEN") or "").strip()
 SEARCH_ENDPOINT = "https://api.twitter.com/2/tweets/search/all"
 TWEET_FIELDS = "created_at,public_metrics,author_id,note_tweet"
 
@@ -24,6 +24,9 @@ class KobeMultiCSVAnalyzer:
         life_csv: str = "kobe_life_keywords.csv",
         youth_csv: str = "kobe_youth_sentiment_keywords.csv",
     ):
+        if not X_API_BEARER_TOKEN:
+            print("⚠️ 警告: X_API_BEARER_TOKEN が設定されていません。.env や環境変数を確認してください。")
+
         self.headers = {
             "Authorization": f"Bearer {X_API_BEARER_TOKEN}"
         }
@@ -54,7 +57,7 @@ class KobeMultiCSVAnalyzer:
             if col_name in df.columns:
                 for _, row in df.iterrows():
                     val = str(row.get(col_name, "")).strip()
-                    if val and val != "nan" and "以下に掲載がない場合" not in val:
+                    if val and val.lower() != "nan" and "以下に掲載がない場合" not in val:
                         if val not in ["神戸", "神戸市"] and val not in items:
                             items.append(val)
         except Exception:
@@ -69,7 +72,7 @@ class KobeMultiCSVAnalyzer:
             target_col = df.columns[0]
             for _, row in df.iterrows():
                 val = str(row.get(target_col, "")).strip()
-                if val and val != "nan" and val != "station_name" and val not in items:
+                if val and val.lower() != "nan" and val != "station_name" and val not in items:
                     items.append(val)
         except Exception:
             pass
@@ -80,7 +83,11 @@ class KobeMultiCSVAnalyzer:
         try:
             df = pd.read_csv(path)
             if "negative_keyword" in df.columns:
-                neg = [str(x).strip() for x in df["negative_keyword"].dropna() if str(x).strip() != "nan"]
+                neg = [
+                    str(x).strip()
+                    for x in df["negative_keyword"].dropna()
+                    if str(x).strip() and str(x).strip().lower() != "nan"
+                ]
         except Exception:
             pass
         return pos, neg
@@ -100,7 +107,7 @@ class KobeMultiCSVAnalyzer:
             if target_col:
                 for val in df[target_col].dropna():
                     s = str(val).strip()
-                    if s and s != "nan" and s not in items:
+                    if s and s.lower() != "nan" and s not in items:
                         items.append(s)
         except Exception:
             pass
@@ -117,10 +124,11 @@ class KobeMultiCSVAnalyzer:
         """取得したツイートを重複チェックしながらSupabaseに保存する（URL・長文対応）"""
         saved_count = 0
         for tweet in tweets:
-            metrics = tweet.get("public_metrics") or {}
-            tweet_id = str(tweet.get("id"))
+            tweet_id = str(tweet.get("id") or "").strip()
+            if not tweet_id:
+                continue
 
-            # ツイートの公式URLを自動生成
+            metrics = tweet.get("public_metrics") or {}
             post_url = f"https://twitter.com/i/web/status/{tweet_id}"
 
             post_data = {
@@ -147,11 +155,14 @@ class KobeMultiCSVAnalyzer:
         return saved_count
 
     def _run_search_loop(self, query: str, target_total: int, label: str):
+        if not X_API_BEARER_TOKEN:
+            print("❌ X_API_BEARER_TOKEN が空のため検索を中止しました。")
+            return
+
         total_fetched = 0
         next_token = None
 
         while total_fetched < target_total:
-            # 1回のリクエストで取得する上限（Search All APIの最大は通常100）
             fetch_limit = min(100, target_total - total_fetched)
 
             params = {
@@ -163,7 +174,7 @@ class KobeMultiCSVAnalyzer:
                 params["next_token"] = next_token
 
             try:
-                response = requests.get(SEARCH_ENDPOINT, headers=self.headers, params=params)
+                response = requests.get(SEARCH_ENDPOINT, headers=self.headers, params=params, timeout=30)
                 if response.status_code == 429:
                     print("⚠️ レート制限に達しました。15分間待機します...")
                     time.sleep(900)
@@ -173,7 +184,7 @@ class KobeMultiCSVAnalyzer:
                     break
 
                 data = response.json()
-                tweets = data.get("data", [])
+                tweets = data.get("data") or []
 
                 if not tweets:
                     print("ℹ️ これ以上取得できる新しいツイートがありません。")
@@ -183,13 +194,12 @@ class KobeMultiCSVAnalyzer:
                 total_fetched += len(tweets)
                 print(f"📥 {label}累計取得件数: {total_fetched}件 (今回新規保存: {saved}件)")
 
-                # 次のページのトークンを取得
-                next_token = data.get("meta", {}).get("next_token")
+                next_token = (data.get("meta") or {}).get("next_token")
                 if not next_token:
                     print("ℹ️ ページネーションの終端に達しました。")
                     break
 
-                time.sleep(1)  # API負荷軽減のウェイト
+                time.sleep(1)
 
             except Exception as e:
                 print(f"💥 通信エラー: {e}")
@@ -202,16 +212,15 @@ class KobeMultiCSVAnalyzer:
 
         clean_tags = [t.strip() for t in (tags or []) if t and t.strip()]
         if clean_tags:
-            tag_query = " OR ".join([f'"{t}"' for t in clean_tags])
+            tag_query = " OR ".join([f'"{t}"' for t in clean_tags[:15]])
             query = f"({tag_query}) -is:retweet lang:ja"
         else:
-            # 地域（行政区 ＋ 駅名）の結合
-            area_pool = self.cities[:10] + self.stations[:10]
+            # クエリ長制限を考慮して件数を抑える
+            area_pool = self.cities[:5] + self.stations[:5]
             area_query = " OR ".join([f'"{a}"' for a in area_pool]) if area_pool else '"神戸市"'
 
-            # 不満・ライフ・若者キーワードの結合
-            sentiment_pool = list(set(self.negative_keywords + self.life_keywords + self.youth_keywords))
-            sentiment_query = " OR ".join([f'"{s}"' for s in sentiment_pool[:15]]) if sentiment_pool else '"不満"'
+            sentiment_pool = list(dict.fromkeys(self.negative_keywords + self.life_keywords + self.youth_keywords))
+            sentiment_query = " OR ".join([f'"{s}"' for s in sentiment_pool[:8]]) if sentiment_pool else '"不満"'
 
             query = f"(神戸市 OR {area_query}) ({sentiment_query}) -is:retweet lang:ja"
 
@@ -223,7 +232,7 @@ class KobeMultiCSVAnalyzer:
 
         clean_tags = [t.strip() for t in (tags or []) if t and t.strip()]
         if clean_tags:
-            tag_query = " ".join([f'"{t}"' for t in clean_tags])
+            tag_query = " ".join([f'"{t}"' for t in clean_tags[:10]])
             query = f"{tag_query} -is:retweet lang:ja"
         else:
             city = self.cities[0] if self.cities else "神戸市"
@@ -245,5 +254,4 @@ class KobeMultiCSVAnalyzer:
 
 if __name__ == "__main__":
     analyzer = KobeMultiCSVAnalyzer()
-    # 1000件収集を実行する場合
     analyzer.fetch_and_analyze_or_target(target_total=1000)

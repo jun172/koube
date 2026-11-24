@@ -47,7 +47,7 @@
     <div class="card">
         <h2>新しいパスワードの設定</h2>
         <p class="subtitle">新しいパスワードを入力してください</p>
-        
+
         <div id="error-message"></div>
 
         <form id="reset-form" onsubmit="handlePasswordReset(event)">
@@ -64,51 +64,60 @@
     </div>
 
 <script>
-    const API_BASE_URL = 'http://localhost:8000';
-    const supabaseClient = window.supabase ? window.supabase.createClient() : null;
+const API_BASE_URL = '';
+const SUPABASE_URL = window.SUPABASE_URL || '';
+const SUPABASE_ANON_KEY = window.SUPABASE_ANON_KEY || '';
+const supabaseClient =
+    window.supabase && SUPABASE_URL && SUPABASE_ANON_KEY
+        ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
+        : null;
 
-    // ページ読み込み時にURLハッシュのエラーをチェック
-    window.addEventListener('DOMContentLoaded', () => {
-        const hash = window.location.hash.substring(1);
-        const params = new URLSearchParams(hash);
-        const errorCode = params.get('error_code');
+window.addEventListener('DOMContentLoaded', () => {
+    const hash = window.location.hash.substring(1);
+    const params = new URLSearchParams(hash);
+    const errorCode = params.get('error_code');
 
-        if (errorCode) {
-            const errorDiv = document.getElementById('error-message');
-            const form = document.getElementById('reset-form');
-            
-            let msg = "リンクが無効です。";
-            if (errorCode === 'otp_expired') {
-                msg = "パスワード再設定リンクの有効期限が切れているか、すでに使用されています。もう一度申請してください。";
-            }
-            
+    if (errorCode) {
+        const errorDiv = document.getElementById('error-message');
+        const form = document.getElementById('reset-form');
+
+        let msg = "リンクが無効です。";
+        if (errorCode === 'otp_expired') {
+            msg = "パスワード再設定リンクの有効期限が切れているか、すでに使用されています。もう一度申請してください。";
+        }
+
+        if (errorDiv) {
             errorDiv.innerText = msg;
             errorDiv.style.display = 'block';
-            form.style.display = 'none'; // エラー時はフォームを隠して再申請を促す
         }
-    });
-
-    async function handlePasswordReset(event) {
-        event.preventDefault();
-        const newPassword = document.getElementById("newPassword").value;
-
-        try {
-            if (!supabaseClient) {
-                throw new Error("Supabaseクライアントが初期化されていません。");
-            }
-
-            const { data, error } = await supabaseClient.auth.updateUser({
-                password: newPassword
-            });
-
-            if (error) throw error;
-
-            alert("パスワードが正常に更新されました！ログイン画面へ移動します。");
-            window.location.href = "/login.html";
-        } catch (error) {
-            alert("エラー: " + (error.message || "パスワードの更新に失敗しました。"));
+        if (form) {
+            form.style.display = 'none';
         }
     }
+});
+
+async function handlePasswordReset(event) {
+    event.preventDefault();
+    const newPasswordInput = document.getElementById("newPassword");
+    const newPassword = newPasswordInput ? newPasswordInput.value : '';
+
+    try {
+        if (!supabaseClient) {
+            throw new Error("Supabase URL または Anon Key が設定されていません。");
+        }
+
+        const { error } = await supabaseClient.auth.updateUser({
+            password: newPassword
+        });
+
+        if (error) throw error;
+
+        alert("パスワードが正常に更新されました！ログイン画面へ移動します。");
+        window.location.href = "/login.html";
+    } catch (error) {
+        alert("エラー: " + (error.message || "パスワードの更新に失敗しました。"));
+    }
+}
 </script>
 </body>
 </html>

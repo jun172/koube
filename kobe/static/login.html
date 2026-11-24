@@ -4,9 +4,8 @@
     <meta charset="UTF-8">
     <link rel="icon" href="/static/imag.png" type="image/png">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>アカウント登録</title>
+    <title>ログイン - 神戸市SNS分析ダッシュボード</title>
     <style>
-        /* 全体のスタイル設定 */
         body {
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
             background-color: #f4f4f4;
@@ -17,8 +16,6 @@
             height: 100vh;
             margin: 0;
         }
-
-        /* ログインカード */
         .card {
             background: #ffffff;
             padding: 40px 30px;
@@ -28,32 +25,25 @@
             max-width: 360px;
             box-sizing: border-box;
         }
-
         .card h2 {
             font-size: 22px;
             margin-bottom: 8px;
             font-weight: bold;
         }
-
         .subtitle {
             font-size: 14px;
             color: #666;
             margin-bottom: 24px;
         }
-
-        /* フォーム要素 */
         .form-group {
             margin-bottom: 20px;
         }
-
         .form-group label {
             display: block;
             font-size: 13px;
             margin-bottom: 6px;
             color: #444;
         }
-
-        input[type="text"],
         input[type="email"],
         input[type="password"] {
             width: 100%;
@@ -66,12 +56,9 @@
             outline: none;
             transition: border-color 0.2s;
         }
-
         input:focus {
             border-color: #000;
         }
-
-        /* 登録ボタン */
         .btn-primary {
             width: 100%;
             background-color: #111;
@@ -85,49 +72,24 @@
             transition: background-color 0.2s;
             margin-top: 5px;
         }
-
         .btn-primary:hover {
             background-color: #333;
-        }
-
-        .link-text {
-            font-size: 12px;
-            color: #666;
-            text-decoration: underline;
-        }
-
-        .link-text:hover {
-            color: #111;
-        }
-
-        .footer-text {
-            text-align: center;
-            font-size: 13px;
-            color: #666;
-            margin-top: 24px;
         }
     </style>
 </head>
 <body>
-
     <div class="card">
         <h2>ログイン</h2>
         <p class="subtitle">必要事項を入力してください</p>
-        
-        <form onsubmit="handleRegister(event)">
-            <!-- ① お名前入力欄の追加 -->
-            <div class="form-group">
-                <label>氏名 <span style="color: #ff4d4f; font-weight: bold;"></span></label>
-                <input type="text" id="name" placeholder="山田 太郎" required>
-            </div>
 
+        <form onsubmit="handleLogin(event)">
             <div class="form-group">
-                <label>メールアドレス <span style="color: #ff4d4f; font-weight: bold;"></span></label>
+                <label>メールアドレス</label>
                 <input type="email" id="email" placeholder="example@email.com" required>
             </div>
 
             <div class="form-group">
-                <label>パスワード <span style="color: #ff4d4f; font-weight: bold;"></span></label>
+                <label>パスワード</label>
                 <input type="password" id="password" placeholder="••••••" required>
                 <div style="text-align: right; margin-top: 6px;">
                     <a href="/reset.html" style="font-size: 12px; color: #666; text-decoration: none;">パスワードをお忘れの方はこちら</a>
@@ -136,37 +98,46 @@
 
             <button type="submit" class="btn-primary">ログイン</button>
         </form>
-
     </div>
 
-</body>
-
 <script>
-// 登録ボタンが押されたときの処理
-async function handleRegister(event) {
+const API_BASE_URL = '';
+
+async function handleLogin(event) {
     event.preventDefault();
-    const name = document.getElementById("name").value;
-    const email = document.getElementById("email").value;
+    const email = document.getElementById("email").value.trim();
     const password = document.getElementById("password").value;
 
-    // 新規登録用のAPI（/api/signup）を叩く場合
-    const res = await fetch('/api/signup', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password, name })
-    });
+    try {
+        const res = await fetch(`${API_BASE_URL}/api/login`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: email.split('@')[0], email, password })
+        });
 
-    const result = await res.json();
+        const result = await res.json();
 
-    if (res.ok) {
-        localStorage.setItem("userName", name);
-        localStorage.setItem("userEmail", email);
-        
-        // メイン画面へ遷移
-        window.location.href = "/app";
-    } else {
-        alert("登録に失敗しました: " + (result.detail || "エラーが発生しました"));
+        if (res.ok) {
+            const displayName =
+                result?.data?.user?.user_metadata?.full_name ||
+                email.split('@')[0] ||
+                'ユーザー';
+
+            localStorage.setItem("userName", displayName);
+            localStorage.setItem("userEmail", email);
+            if (result?.data?.session?.access_token) {
+                localStorage.setItem("supabase_access_token", result.data.session.access_token);
+            }
+
+            window.location.href = "/main.html";
+        } else {
+            alert("ログインに失敗しました: " + (result.detail || "メールアドレスまたはパスワードを確認してください"));
+        }
+    } catch (err) {
+        console.error("ログイン通信エラー:", err);
+        alert("サーバーとの通信に失敗しました。");
     }
 }
 </script>
+</body>
 </html>

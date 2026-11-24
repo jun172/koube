@@ -45,7 +45,7 @@
     <div class="card">
         <h2>パスワードをお忘れですか？</h2>
         <p class="subtitle">登録したメールアドレス宛に再設定リンクを送信します</p>
-        
+
         <form onsubmit="handleForgotSubmit(event)">
             <div class="form-group">
                 <label>メールアドレス</label>
@@ -60,28 +60,30 @@
     </div>
 
 <script>
-    async function handleForgotSubmit(event) {
-        event.preventDefault();
-        const email = document.getElementById("email").value;
+const API_BASE_URL = '';
 
-        try {
-            const res = await fetch('/api/forgot-password', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ email })
-            });
+async function handleForgotSubmit(event) {
+    event.preventDefault();
+    const email = document.getElementById("email").value.trim();
 
-            const result = await res.json();
-            if (res.ok) {
-                alert("パスワード再設定メールを送信しました。メールをご確認ください。");
-                window.location.href = "/login.html";
-            } else {
-                alert("エラー: " + (result.detail || "送信に失敗しました"));
-            }
-        } catch (err) {
-            alert("通信エラーが発生しました。");
+    try {
+        const res = await fetch(`${API_BASE_URL}/api/forgot-password`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email })
+        });
+
+        const result = await res.json();
+        if (res.ok) {
+            alert("パスワード再設定メールを送信しました。メールをご確認ください。");
+            window.location.href = "/login.html";
+        } else {
+            alert("エラー: " + (result.detail || "送信に失敗しました"));
         }
+    } catch (err) {
+        alert("通信エラーが発生しました。");
     }
+}
 </script>
 </body>
 </html>

@@ -5,106 +5,95 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>神戸市SNS分析ダッシュボード</title>
     <link rel="icon" href="/static/imag.png" type="image/png">
-    
+
     <style>
         body { margin: 0; background-color: #f8f9fa; color: #202124; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; overflow: hidden; }
         .app-container { display: flex; height: 100vh; overflow: hidden; position: relative; }
 
-        /* サイドバー */
         .sidebar { width: 260px; background-color: #f1f3f4; padding: 24px 20px; border-right: 1px solid #dadce0; box-sizing: border-box; display: flex; flex-direction: column; overflow-y: auto; flex-shrink: 0; transition: transform 0.3s ease; z-index: 100; }
         .sidebar h3 { font-size: 14px; color: #5f6368; margin-top: 20px; margin-bottom: 12px; font-weight: normal; }
 
-        /* ユーザー名表示エリア */
         .user-welcome { font-size: 14px; color: #1a73e8; font-weight: bold; padding-bottom: 15px; border-bottom: 1px solid #dadce0; }
 
-        /* アクションボタン */
         .new-chat-btn { margin: 8px 0; padding: 10px; background-color: #1a73e8; color: #ffffff; border: none; border-radius: 8px; font-weight: bold; cursor: pointer; transition: background-color 0.2s, transform 0.1s; width: 100%; text-align: center; box-sizing: border-box; }
         .new-chat-btn:hover { background-color: #1557b0; }
         .new-chat-btn:active { transform: scale(0.98); }
 
-        /* 停止ボタン用スタイル */
         .stop-btn { background-color: #d93025 !important; color: #ffffff !important; }
         .stop-btn:hover { background-color: #b31412 !important; }
 
-        /* モバイル用ハンバーガーメニューボタン */
         .mobile-menu-btn { display: none; position: fixed; top: 12px; left: 12px; z-index: 101; background: #f1f3f4; border: 1px solid #dadce0; color: #202124; padding: 8px 12px; border-radius: 8px; cursor: pointer; font-size: 16px; align-items: center; justify-content: center; }
 
-        /* サイドバーの背景オーバーレイ（スマホ用） */
         .sidebar-overlay { display: none; position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(0,0,0,0.3); z-index: 99; }
 
-        /* メインコンテンツ */
         .main-content { flex: 1; display: flex; flex-direction: column; position: relative; overflow: hidden; min-width: 0; }
         #mainDisplayArea { flex: 1; overflow-y: auto; padding: 40px; display: flex; flex-direction: column; align-items: center; justify-content: center; box-sizing: border-box; scroll-behavior: smooth; -webkit-overflow-scrolling: touch; background-color: #ffffff; }
-        
-        /* 初期ウェルカム画面 */
+
         .welcome-container { text-align: center; max-width: 600px; width: 100%; display: flex; flex-direction: column; align-items: center; gap: 24px; animation: fadeIn 0.4s ease-out; padding: 0 20px; box-sizing: border-box; }
         .welcome-title { font-size: 32px; font-weight: bold; background: linear-gradient(90deg, #1a73e8, #9334e6); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin: 0; word-break: break-all; }
         .welcome-subtitle { font-size: 16px; color: #5f6368; margin: 0; }
 
-        /* 検索結果カード */
-        .analysis-card { 
-            background-color: #ffffff; 
-            padding: 30px; 
-            border-radius: 16px; 
-            border: 1px solid #dadce0; 
-            max-width: 800px; 
-            width: 100%; 
-            margin-bottom: 24px; 
-            box-sizing: border-box; 
-            box-shadow: 0 4px 20px rgba(0,0,0,0.05); 
-            animation: fadeIn 0.3s ease-out; 
-            color: #202124; 
+        .analysis-card {
+            background-color: #ffffff;
+            padding: 30px;
+            border-radius: 16px;
+            border: 1px solid #dadce0;
+            max-width: 800px;
+            width: 100%;
+            margin-bottom: 24px;
+            box-sizing: border-box;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.05);
+            animation: fadeIn 0.3s ease-out;
+            color: #202124;
         }
 
-        .analysis-card p, 
-        .analysis-card span, 
-        .analysis-card div { 
-            color: #3c4043; 
+        .analysis-card p,
+        .analysis-card span,
+        .analysis-card div {
+            color: #3c4043;
         }
 
-        .analysis-card h4, 
+        .analysis-card h4,
         .analysis-card strong {
             color: #202124;
         }
 
-        /* 投稿アイテム */
-        .post-item { 
-            padding: 16px 0; 
-            margin-bottom: 16px; 
-            border-bottom: 1px solid rgba(0, 0, 0, 0.08); 
+        .post-item {
+            padding: 16px 0;
+            margin-bottom: 16px;
+            border-bottom: 1px solid rgba(0, 0, 0, 0.08);
             transition: opacity 0.2s ease;
         }
         .post-item:last-child {
             border-bottom: none;
         }
         .post-header { display: flex; flex-direction: column; cursor: pointer; }
-        
+
         .post-summary { font-weight: bold; color: #1a73e8; font-size: 15px; margin-bottom: 8px; }
-        .post-original { 
-            font-size: 14px; 
-            color: #202124; 
-            margin-bottom: 8px; 
-            line-height: 1.6; 
-            padding: 12px 14px; 
-            background: #f8f9fa; 
-            border-radius: 8px; 
-            border-left: 4px solid #1a73e8; 
-            word-break: break-word; 
-            white-space: pre-wrap; 
+        .post-original {
+            font-size: 14px;
+            color: #202124;
+            margin-bottom: 8px;
+            line-height: 1.6;
+            padding: 12px 14px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            border-left: 4px solid #1a73e8;
+            word-break: break-word;
+            white-space: pre-wrap;
         }
         .post-footer { display: flex; justify-content: space-between; align-items: center; margin-top: 8px; font-size: 12px; color: #1a73e8; flex-wrap: wrap; gap: 6px; }
         .like-badge { background: rgba(26, 115, 232, 0.1); padding: 3px 8px; border-radius: 12px; color: #1a73e8; font-weight: 500; }
         .date-badge { color: #5f6368 !important; font-size: 11px; font-weight: 500; }
 
-        /* 下部入力エリア・タグエリア */
         .bottom-input-section { padding: 20px 40px 30px; display: flex; flex-direction: column; align-items: center; gap: 12px; background-color: #ffffff; width: 100%; box-sizing: border-box; border-top: 1px solid #dadce0; }
-        
+
         .tag-container { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; align-items: center; max-width: 600px; width: 100%; }
         .tag { background-color: #f1f3f4; padding: 6px 12px; border-radius: 20px; font-size: 13px; cursor: pointer; border: 1px solid #dadce0; color: #202124; display: inline-flex; align-items: center; gap: 6px; transition: background 0.2s, border-color 0.2s; }
         .tag:hover { background-color: #e8eaed; border-color: #1a73e8; }
         .tag-delete { background: none; border: none; color: #5f6368; cursor: pointer; font-size: 14px; padding: 0; line-height: 1; border-radius: 50%; width: 16px; height: 16px; display: inline-flex; align-items: center; justify-content: center; transition: color 0.2s, background 0.2s; }
         .tag-delete:hover { color: #d93025; background: rgba(217,48,37,0.1); }
-        
+
         .add-tag-btn { background: #f1f3f4; border: 1px dashed #bdc1c6; color: #5f6368; padding: 6px 12px; border-radius: 20px; font-size: 13px; cursor: pointer; transition: all 0.2s; }
         .add-tag-btn:hover { border-color: #1a73e8; color: #1a73e8; background: rgba(26,115,232,0.05); }
         .tag-input-form { display: inline-flex; align-items: center; gap: 4px; background: #f1f3f4; border: 1px solid #1a73e8; padding: 2px 8px; border-radius: 20px; }
@@ -118,19 +107,19 @@
         .search-icon-button { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); background: rgba(218, 220, 224, 0.6); border: none; border-radius: 50%; width: 40px; height: 40px; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 16px; transition: background 0.2s, transform 0.1s; backdrop-filter: blur(4px); color: #202124; }
         .search-icon-button:hover { background: #bdc1c6; }
 
-        .tree-container { 
-            margin-top: 15px; 
-            padding: 15px; 
-            background-color: #f8f9fa; 
-            border-radius: 12px; 
-            border: 1px solid #dadce0; 
-            animation: expandDown 0.3s ease-out; 
-            overflow: hidden; 
-            color: #202124; 
+        .tree-container {
+            margin-top: 15px;
+            padding: 15px;
+            background-color: #f8f9fa;
+            border-radius: 12px;
+            border: 1px solid #dadce0;
+            animation: expandDown 0.3s ease-out;
+            overflow: hidden;
+            color: #202124;
         }
 
         .tree-container, .tree-container span, .tree-container div {
-            color: #3c4043; 
+            color: #3c4043;
         }
 
         @media (max-width: 768px) {
@@ -160,23 +149,21 @@
     <div class="sidebar-overlay" id="sidebarOverlay" onclick="toggleSidebar()"></div>
 
     <div class="app-container">
-        <!-- サイドバー -->
         <aside class="sidebar" id="sidebar">
             <div id="welcome-user" class="user-welcome">Unmute City</div>
-            
+
             <button class="new-chat-btn" onclick="startNewSearch()">
                 新しい検索・分析
             </button>
+
             <button class="new-chat-btn" onclick="triggerXCollection()">Xから最新データを収集</button>
             <button class="new-chat-btn stop-btn" onclick="stopXCollection()">🛑 X収集を停止</button>
 
             <button class="new-chat-btn" onclick="triggerAiAnalysis()" style="margin-top: 12px;">AI一括解析を実行</button>
             <button class="new-chat-btn stop-btn" onclick="stopAiAnalysis()">🛑 AI解析を停止</button>
-            <!-- HTMLの例 -->
-            <button id="logout-btn" onclick="handleLogout()" class="...">ログアウト</button>
+            <button id="logout-btn" onclick="handleLogout()" class="new-chat-btn" style="background-color: #5f6368; margin-top: 12px;">ログアウト</button>
         </aside>
 
-        <!-- メイン画面 -->
         <main class="main-content">
             <div id="mainDisplayArea">
                 <div class="welcome-container" id="welcomeView">
@@ -184,7 +171,6 @@
                     <p class="welcome-subtitle">分析したいキーワードやタグを選択・入力してください</p>
                 </div>
             </div>
-            <!-- 下部入力エリア（クイック検索タグ付き） -->
             <div class="bottom-input-section">
                 <div class="tag-container" id="tagContainer"></div>
                 <div class="search-container">
@@ -201,19 +187,17 @@
     </div>
 
 <script>
-const API_BASE_URL = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' 
-    ? 'http://localhost:8000' 
-    : '';
+const API_BASE_URL = '';
 
 let currentPosts = [];
 let currentQueryTitle = "";
-let customTags = JSON.parse(localStorage.getItem("customTags")) || ['神戸市', '三宮', '不満', '道路'];
+let customTags = ['神戸市', '三宮', '不満', '道路'];
 let currentHistoryId = null;
 
 window.onload = async function() {
     const name = localStorage.getItem("userName");
     if (!name) {
-        window.location.href = '/static/login.html';
+        window.location.href = '/login.html';
         return;
     }
 
@@ -222,15 +206,20 @@ window.onload = async function() {
         welcomeUser.textContent = `ようこそ、${name} さん`;
     }
 
-    if (!localStorage.getItem("customTags")) {
+    const savedTags = localStorage.getItem("customTags");
+    if (!savedTags) {
         customTags = ['神戸市', '三宮', '不満', '道路'];
         localStorage.setItem("customTags", JSON.stringify(customTags));
     } else {
-        customTags = JSON.parse(localStorage.getItem("customTags"));
+        try {
+            const parsed = JSON.parse(savedTags);
+            customTags = Array.isArray(parsed) ? parsed : ['神戸市', '三宮', '不満', '道路'];
+        } catch (e) {
+            customTags = ['神戸市', '三宮', '不満', '道路'];
+        }
     }
 
     renderTags();
-    updateActiveTagsUI(); // 初期化時にタグ表示UIを更新
 };
 
 function handleSearchKeyDown(event) {
@@ -244,10 +233,10 @@ let isSearching = false;
 
 async function executeSearch() {
     if (isSearching) return;
-    
+
     const input = document.getElementById('searchInput');
     if (!input) return;
-    
+
     const query = input.value.trim();
     if (!query) return;
 
@@ -262,7 +251,7 @@ async function executeSearch() {
         currentHistoryId = data.history_id || '';
 
         renderPostsContainer(currentQueryTitle, currentPosts, 'all', currentHistoryId);
-        
+
         input.value = '';
         const displayArea = document.getElementById('mainDisplayArea');
         if (displayArea) displayArea.scrollTo({ top: displayArea.scrollHeight, behavior: 'smooth' });
@@ -277,8 +266,8 @@ async function executeSearch() {
 function toggleSidebar() {
     const sidebar = document.getElementById('sidebar');
     const overlay = document.getElementById('sidebarOverlay');
-    sidebar.classList.toggle('open');
-    overlay.classList.toggle('open');
+    if (sidebar) sidebar.classList.toggle('open');
+    if (overlay) overlay.classList.toggle('open');
 }
 
 function renderTags() {
@@ -297,9 +286,6 @@ function renderTags() {
 
     html += `<button class="add-tag-btn" onclick="showAddTagInput()">+ 追加</button>`;
     container.innerHTML = html;
-    
-    // タグが変更されたらUI側も同期して更新
-    updateActiveTagsUI();
 }
 
 function showAddTagInput() {
@@ -366,48 +352,20 @@ function renderHashtags(text) {
         '</div>';
 }
 
-// --- 画面上のタグ表示をリアルタイム更新する関数 ---
-function updateActiveTagsUI() {
-    const activeTagsList = document.getElementById('activeTagsList');
-    const activeModeBadge = document.getElementById('activeModeBadge');
-
-    if (!customTags || customTags.length === 0) {
-        if (activeTagsList) activeTagsList.textContent = "なし（未指定）";
-        return;
-    }
-
-    if (activeTagsList) {
-        activeTagsList.textContent = customTags.join(', ');
-    }
-
-    const modeSelect = document.getElementById('collectionMode');
-    const currentMode = modeSelect ? modeSelect.value.toUpperCase() : 'OR';
-    
-    if (activeModeBadge) {
-        activeModeBadge.textContent = `${currentMode}検索`;
-    }
-}
-
-// --- Xデータ収集トリガー関数（カスタムタグをバックエンドへ送信） ---
 async function triggerXCollection() {
-    const tagsToSend = customTags && customTags.length > 0 
-        ? customTags 
+    const tagsToSend = customTags && customTags.length > 0
+        ? customTags
         : ['神戸市', '三宮', '不満', '道路'];
 
-    const modeSelect = document.getElementById('collectionMode');
-    const selectedMode = modeSelect ? modeSelect.value : 'or';
-
     const tagsDisplayStr = tagsToSend.join(', ');
-    if (!confirm(`以下の指定タグ【${selectedMode.toUpperCase()}条件】でXデータ収集とAI解析を開始しますか？\n\n📌 指定タグ: [ ${tagsDisplayStr} ]`)) {
+    if (!confirm(`以下の指定タグでXデータ収集とAI解析を開始しますか？\n\n📌 指定タグ: [ ${tagsDisplayStr} ]`)) {
         return;
     }
 
     const payload = {
         tags: tagsToSend,
-        mode: selectedMode
+        mode: 'or'
     };
-
-    console.log("送信するカスタムタグ:", tagsToSend);
 
     try {
         const response = await fetch(`${API_BASE_URL}/api/collect`, {
@@ -415,10 +373,10 @@ async function triggerXCollection() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)
         });
-        
+
         if (!response.ok) throw new Error("APIの呼び出しに失敗しました");
         const data = await response.json();
-        
+
         alert(`【収集開始】\n対象タグ: ${tagsDisplayStr}\n\n` + (data.message || "全自動Xデータ収集を開始しました！"));
     } catch (error) {
         console.error("収集エラー:", error);
@@ -510,7 +468,7 @@ function renderPostsContainer(queryTitle, posts, currentTab = 'all', historyId =
     if (posts.length === 0) {
         postsHtml = `<p style="color:#666; font-size:13px; padding: 10px 0;">該当する投稿データが見つかりませんでした。</p>`;
     } else {
-       posts.forEach((post) => {
+        posts.forEach((post) => {
             const summaryText = post.summary || "要約なし";
             const originalText = post.post_text || post.title || summaryText;
             const tagsHtml = renderHashtags(originalText);
@@ -526,7 +484,7 @@ function renderPostsContainer(queryTitle, posts, currentTab = 'all', historyId =
                 const sScore = parseFloat(post.sentiment_score);
                 let sColor = '#1a73e8';
                 let sText = '中立';
-                
+
                 if (sScore > 0) {
                     sColor = '#137333';
                     sText = `ポジティブ (${sScore.toFixed(2)})`;
@@ -588,7 +546,7 @@ async function renderSimpleTree(container, postId) {
 
     let html = `<div style="font-size: 13px; color: #202124; padding: 4px;">`;
     html += `<div style="font-weight: bold; color: #1a73e8; margin-bottom: 8px;">📁 ${rawData.name}</div>`;
-    
+
     if (rawData.children && rawData.children.length > 0) {
         html += `<ul style="margin: 0; padding-left: 20px; list-style-type: disc; display: flex; flex-direction: column; gap: 4px;">`;
         rawData.children.forEach(child => {
@@ -611,8 +569,9 @@ async function renderSimpleTree(container, postId) {
 
 function toggleLogicTree(headerElement, postId) {
     const parent = headerElement.parentElement;
+    if (!parent) return;
     let treeContainer = parent.querySelector('.tree-container');
-    
+
     if (treeContainer) {
         treeContainer.style.animation = 'fadeIn 0.2s ease-out reverse';
         setTimeout(() => treeContainer.remove(), 180);
@@ -627,23 +586,22 @@ function toggleLogicTree(headerElement, postId) {
     parent.appendChild(treeContainer);
 
     const canvas = treeContainer.querySelector('.tree-canvas');
-    renderSimpleTree(canvas, postId);
+    if (canvas) renderSimpleTree(canvas, postId);
 }
+
 async function handleLogout() {
-    // 例: ローカルストレージにトークンを保存している場合
-    localStorage.removeItem("supabase.auth.token"); // または該当するキー
-    
-    // バックエンドにログアウト通知を送る場合
+    localStorage.removeItem("supabase_access_token");
+    localStorage.removeItem("userName");
+    localStorage.removeItem("userEmail");
+
     try {
-        await fetch("/api/logout", { method: "POST" });
+        await fetch(`${API_BASE_URL}/api/logout`, { method: "POST" });
     } catch (e) {
         console.error("ログアウトエラー", e);
     }
 
-    // ログイン画面（ルート）へ強制リダイレクト
-    window.location.href = "/";
+    window.location.href = "/login.html";
 }
-
 </script>
 </body>
 </html>

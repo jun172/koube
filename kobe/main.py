@@ -43,7 +43,7 @@ x_client = KobeMultiCSVAnalyzer()
 RESEND_FROM = os.environ.get("RESEND_FROM_EMAIL", "onboarding@resend.dev")
 
 class IssueCatalogCreate(BaseModel):
-    history_id: Optional[str]
+    history_id: Optional[str] = None
     main_category: str
     sub_category: str
     detail_category: str
@@ -91,7 +91,7 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 def serve_static_html(filename: str):
     file_path = STATIC_DIR / filename
     if not file_path.exists():
-        return {"error": f"{filename} not found in static folder."}
+        raise HTTPException(status_code=404, detail=f"{filename} not found in static folder.")
     return FileResponse(str(file_path))
 
 @app.get("/", include_in_schema=False)
@@ -127,17 +127,41 @@ RESEND_FROM = "神戸市SNS分析ダッシュボード <info@kobe-city.bid>"
 @app.put("/api/users/password-reset")
 def reset_password(data: PasswordResetSchema):
     try:
-        users_response = supabase.auth.admin.list_users()
-        target_user = next((u for u in users_response if getattr(u, 'email', None) == data.email), None)
+        admin_supabase = get_supabase_admin_client()
+        users_response = admin_supabase.auth.admin.list_users()
+
+        if isinstance(users_response, list):
+            users_list = users_response
+        elif hasattr(users_response, "users"):
+            users_list = users_response.users  # type: ignore
+        elif isinstance(users_response, dict):
+            users_list = users_response.get("users", [])
+        else:
+            users_list = []
+
+        target_user = None
+        for u in users_list:
+            u_email = getattr(u, "email", None) or (u.get("email") if isinstance(u, dict) else None)
+            if u_email == data.email:
+                target_user = u
+                break
 
         if not target_user:
             raise HTTPException(status_code=404, detail="該当するユーザがいません")
 
-        response = supabase.auth.admin.update_user_by_id(
-            target_user.id,
+        raw_user_id = getattr(target_user, "id", None) or (
+            target_user.get("id") if isinstance(target_user, dict) else None
+        )
+        if not raw_user_id:
+            raise HTTPException(status_code=400, detail="ユーザーIDを取得できませんでした")
+
+        response = admin_supabase.auth.admin.update_user_by_id(
+            str(raw_user_id),
             {"password": data.new_password}
         )
         return {"message": "パスワードが正常に上書きされました", "data": response}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -216,10 +240,8 @@ async def trigger_collection(req: Optional[CollectionRequest] = None, background
         try:
             if hasattr(x_client, "run_scan_with_tags"):
                 x_client.run_scan_with_tags(tags=tags, mode=mode)
-            elif hasattr(x_client, "run_full_scan"):
-                x_client.run_scan_with_tags()
             else:
-                print("⚠️ x_client に実行メソッドが見つかりません。")
+                print("⚠️ x_client に run_scan_with_tags メソッドが見つかりません。")
         except Exception as e:
             print(f"💥 X収集パイプライン実行エラー: {e}")
 
@@ -251,6 +273,8 @@ def get_analysis_result(post_id: int):
         if not response.data:
             raise HTTPException(status_code=404, detail="Analysis result not found for this post.")
         return response.data[0]
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -306,13 +330,17 @@ def serve_login():
 def serve_reset():
     return serve_static_html("reset.html")
 
+@app.get("/main.html", include_in_schema=False)
+def serve_main_html():
+    return serve_static_html("main.html")
+
 @app.get("/app", include_in_schema=False)
 def serve_app_dashboard():
-    return serve_static_html("mian.html")
+    return serve_static_html("main.html")
 
 @app.get("/app/{history_id}", include_in_schema=False)
 def serve_app_history_dashboard(history_id: str):
-    return serve_static_html("mian.html")
+    return serve_static_html("main.html")
 
 @app.get("/reset2.html", include_in_schema=False)
 def serve_reset2():
@@ -456,6 +484,8 @@ def get_history_detail(history_id: str, sentiment: str = "all"):
             "results": {"posts": filtered_posts},
             "summary": history_data.get("summary")
         }
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
